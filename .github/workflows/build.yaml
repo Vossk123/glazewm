@@ -18,12 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # MacOS (Intel)
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-          # MacOS (Apple Silicon)
-          - platform: macos-latest
-            target: aarch64-apple-darwin
+          # This fork only ships Windows binaries (macOS targets dropped).
           # 64-bit Windows (Intel & AMD)
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
@@ -47,10 +42,10 @@ jobs:
       - name: Build for ${{ matrix.target }}
         env:
           VERSION_NUMBER: ${{ inputs.version_number }}
-          # Conditionally enable UIAccess feature for Windows.
-          FEATURES: ${{ matrix.platform == 'windows-latest' && inputs.enable_ui_access && '--features ui_access' || '' }}
-          # Include `wm-watcher` when building for Windows.
-          SCOPE: ${{ matrix.platform == 'windows-latest' && '--workspace' || '' }}
+          # Conditionally enable UIAccess feature.
+          FEATURES: ${{ inputs.enable_ui_access && '--features ui_access' || '' }}
+          # Include `wm-watcher` in the build.
+          SCOPE: --workspace
         shell: bash
         run: cargo build --locked --release --target ${{ matrix.target }} $SCOPE $FEATURES
 
@@ -61,10 +56,8 @@ jobs:
           UPLOAD_DIR="temp/$SOURCE_DIR"
           mkdir -p "$UPLOAD_DIR"
 
-          # Move build artifacts. Suppress errors for missing platform-specific binaries.
-          mv "$SOURCE_DIR"/glazewm{,-cli} \
-            "$SOURCE_DIR"/glazewm{,-cli,-watcher}.exe \
-            "$UPLOAD_DIR/" 2>/dev/null || true
+          # Move build artifacts (Windows binaries only on this fork).
+          mv "$SOURCE_DIR"/glazewm.exe "$SOURCE_DIR"/glazewm-cli.exe "$SOURCE_DIR"/glazewm-watcher.exe "$UPLOAD_DIR/"
 
       - uses: actions/upload-artifact@v6
         with:
