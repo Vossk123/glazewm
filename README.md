@@ -1,393 +1,295 @@
 <div align="center">
 
-> V3 is finally out - check out the changelog [here](https://github.com/glzr-io/GlazeWM/releases) 🔥
+<img src="./resources/assets/logo.svg" width="180" alt="GlazeWM logo" />
 
-  <br>
-  <img src="./resources/assets/logo.svg" width="230" alt="GlazeWM logo" />
-  <br>
+# GlazeWM — Stage Manager Edition
 
-# GlazeWM
+**A fork of [GlazeWM](https://github.com/glzr-io/glazewm) v3.10.1 that adds a macOS-style
+Stage Manager (single-window) mode to Windows 11 — while keeping every upstream tiling
+feature exactly as it was.**
 
-**A tiling window manager for Windows inspired by i3wm.**
+[English](#english) · [中文](#中文说明)
 
-[![Discord invite][discord-badge]][discord-link]
-[![Downloads][downloads-badge]][downloads-link]
-[![Good first issues][issues-badge]][issues-link]
-
-GlazeWM lets you easily organize windows and adjust their layout on the fly by using keyboard-driven commands.
-
-[Installation](#installation) •
-[Default keybindings](#default-keybindings) •
-[Config documentation](#config-documentation) •
-[FAQ](#faq) •
-[Contributing ↗](https://github.com/glzr-io/glazewm/blob/main/CONTRIBUTING.md)
-
-![Demo video][demo-video]
+![Stage Manager panel](./docs/assets/stage-panel.png)
 
 </div>
 
-### 🌟 Key features
+---
 
-- Simple YAML configuration
-- Multi-monitor support
-- Customizable rules for specific windows
-- Easy one-click installation
-- Integration with [Zebar](https://github.com/glzr-io/zebar) as a status bar
+<a id="english"></a>
 
-## Installation
+## What is Stage Manager?
 
-**The latest version of GlazeWM is downloadable via [releases](https://github.com/glzr-io/GlazeWM/releases).** Zebar can optionally be installed as well via a checkbox during installation.
+Stage Manager is an optional, opt-in mode that turns your desktop into a
+one-window-at-a-time workspace, inspired by macOS Stage Manager:
 
-GlazeWM is also available through several package managers:
+- **One window on the desktop.** When stage mode is on and another window takes
+  focus (Alt+Tab, launching an app, clicking a card…), the window that *was* in
+  the foreground is minimized. At most one application window stays visible.
+- **Butter-smooth handoff.** The outgoing window is minimized *before* the
+  incoming one is restored, and a foreground-reclaim guard re-asserts the switch
+  if a just-minimized app steals the foreground back — so you almost never see
+  two windows on the desktop at the same time.
+- **A card dock on the side.** A floating panel docked to the left or right edge
+  lists every *minimized* taskbar window (the focused window is never shown).
+  Each card shows a live thumbnail — captured from the real window content just
+  before it was minimized — with a clean app-icon fallback when no thumbnail is
+  available yet.
+- **Click a card to switch.** The clicked window is restored and focused; the
+  window you were using is minimized first and appears as a new card.
+- **One hotkey to turn it on/off.** The toggle command is fully bindable, or
+  drivable from the CLI: `glazewm command toggle-stage-manager`.
+- **Never steals focus.** The panel is a non-activating tool window: no taskbar
+  button, excluded from Alt+Tab, click-through friendly.
+- **Smart exemptions.** Windows that share the focused window's process or
+  title, fullscreen windows, and any whitelisted window are never minimized by
+  the sweep (they may coexist visibly; once minimized they appear as cards
+  like everything else).
 
-**Winget**
+When stage mode is off, GlazeWM behaves exactly like upstream.
 
-```sh
-winget install GlazeWM
-```
+## Quick start
 
-**Chocolatey**
+1. **Get the binary.** Build from source (see [Build](#build-from-source)) or use
+   a prebuilt `glazewm.exe` from this fork's releases.
+2. **Install.** Close GlazeWM (`glazewm command wm-exit`), back up the original,
+   then replace the main executable (the CLI and watcher from the official
+   install keep working — the IPC protocol is unchanged):
 
-```sh
-choco install glazewm
-```
+   ```powershell
+   Stop-Process -Name glazewm -Force
+   Copy-Item 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe.bak'
+   Copy-Item .\glazewm.exe 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' -Force
+   Start-Process 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe'
+   ```
 
-**Scoop**
+3. **Configure.** Edit `~\.glzr\glazewm\config.yaml`:
 
-```sh
-scoop bucket add extras
-scoop install extras/glazewm
-```
+   ```yaml
+   keybindings:
+     - context: wm
+       bind: alt + shift + m
+       command: toggle-stage-manager
 
-## Contributing
+   stage_manager:
+     enabled: true   # start in stage mode on launch; omit/false = start off
+     side: right     # panel dock side: left | right
+     size: medium    # panel scale: small | medium | large
+   ```
 
-Help fix something that annoys you, or add a feature you've been wanting for a long time! Contributions are very welcome.
+4. Reload the config (`glazewm command wm-reload-config`) and press
+   `alt + shift + m`.
 
-Local development and guidelines are available in the [contributing guide](https://github.com/glzr-io/glazewm/blob/main/CONTRIBUTING.md).
+## Configuration reference
 
-## Default keybindings
+All stage-manager options live under a new `stage_manager` block in the normal
+GlazeWM config file. Every field is optional — defaults are shown.
 
-On the first launch of GlazeWM, a default configuration can optionally be generated.
+| Key                  | Values                              | Default  | Description                                                        |
+| -------------------- | ----------------------------------- | -------- | ------------------------------------------------------------------ |
+| `enabled`            | `true` / `false`                    | `false`  | Automatically start in stage mode when GlazeWM starts.             |
+| `side`               | `left` / `right`                    | `right`  | Which edge of the primary monitor the card panel docks to.         |
+| `size`               | `small` / `medium` / `large`        | `medium` | Panel scale (card width 160 / 216 / 280 px). Cards auto-shrink if the panel would overflow the screen height. |
+| `opacity`            | `0.0` – `1.0`                       | `0.85`   | Card background opacity.                                           |
+| `spacing`            | pixels                              | `10`     | Vertical spacing between cards.                                    |
+| `corner_radius`      | pixels                              | `12`     | Card corner radius.                                                |
+| `hide_on_fullscreen` | `true` / `false`                    | `true`   | Hide the panel while a fullscreen window has focus.                |
+| `exempt_same_process`| `true` / `false`                    | `true`   | Never minimize windows from the focused window's process.          |
+| `exempt_same_title`  | `true` / `false`                    | `true`   | Never minimize windows with the focused window's title.            |
+| `exempt_fullscreen`  | `true` / `false`                    | `true`   | Never minimize fullscreen windows.                                 |
+| `whitelist`          | list of match rules                 | `[]`     | Windows matching any rule are never minimized. Same matchers as `window_rules`. |
 
-Below is a cheat sheet of all available commands and their default keybindings.
-
-![Infographic](/resources/assets/cheatsheet.png)
-
-## Config documentation
-
-The [default config](https://github.com/glzr-io/glazewm/blob/main/resources/assets/sample-config.yaml) file is generated at `%userprofile%\.glzr\glazewm\config.yaml`.
-
-To use a different config file location, you can launch the GlazeWM executable with the CLI argument `--config="..."`, like so:
-
-```sh
-./glazewm.exe start --config="C:\<PATH_TO_CONFIG>\config.yaml"
-```
-
-Or pass a value for the `GLAZEWM_CONFIG_PATH` environment variable:
-
-```sh
-setx GLAZEWM_CONFIG_PATH "C:\<PATH_TO_CONFIG>\config.yaml"
-```
-
-With the benefit of using a custom path being that you can choose a different name for the config file, such as `glazewm.yaml`.
-
-### Config: General
-
-```yaml
-general:
-  # Commands to run when the WM has started (e.g. to run a script or launch
-  # another application).
-  startup_commands: []
-
-  # Commands to run just before the WM is shutdown.
-  shutdown_commands: []
-
-  # Commands to run after the WM config has reloaded.
-  config_reload_commands: []
-
-  # Whether to automatically focus windows underneath the cursor.
-  focus_follows_cursor: false
-
-  # Whether to switch back and forth between the previously focused
-  # workspace when focusing the current workspace.
-  toggle_workspace_on_refocus: false
-
-  cursor_jump:
-    # Whether to automatically move the cursor on the specified trigger.
-    enabled: true
-
-    # Trigger for cursor jump:
-    # - 'monitor_focus': Jump when focus changes between monitors.
-    # - 'window_focus': Jump when focus changes between windows.
-    trigger: "monitor_focus"
-```
-
-### Config: Keybindings
-
-The available keyboard shortcuts can be customized via the `keybindings` option. A keybinding consists of one or more key combinations and one or more commands to run when pressed.
-
-It's recommended to use the alt key for keybindings. The Windows key is unfortunately a pain to remap, since the OS reserves certain keybindings (e.g. `lwin+l`).
+Whitelist example:
 
 ```yaml
-keybindings:
-  # Command(s) to run.
-  - commands: ["focus --workspace 1"]
-
-    # Key combination(s) to trigger the keybinding.
-    bindings: ["alt+1"]
-
-  # Multiple commands can be run in a sequence (e.g. to move a window to a
-  # workspace + focus workspace).
-  - commands: ["move --workspace 1", "focus --workspace 1"]
-    bindings: ["alt+shift+1"]
+stage_manager:
+  whitelist:
+    - window_process: { equals = "obs64" }
+    - window_title: { regex = "Task Manager" }
+    - window_class: { includes = "Chrome_WidgetWin" }
 ```
 
-**Full list of keys that can be used for keybindings:**
+Behavior notes:
 
-<details>
-<summary>Keys list</summary>
+- Turning stage mode **off** stops the sweep but does not restore windows that
+  were already minimized — that is by design, so the toggle never surprises you
+  by throwing old windows back onto the desktop.
+- Coexisting (exempt) windows such as extra Explorer windows stay visible
+  alongside the focused one; they appear on the panel only after they get
+  minimized.
 
-| Key                   | Description                                                               |
-| --------------------- | ------------------------------------------------------------------------- |
-| `a` - `z`             | Alphabetical letter keys                                                  |
-| `0` - `9`             | Number keys                                                               |
-| `numpad0` - `numpad9` | Numerical keypad keys                                                     |
-| `f1` - `f24`          | Function keys                                                             |
-| `shift`               | Either left or right SHIFT key                                            |
-| `lshift`              | The left SHIFT key                                                        |
-| `rshift`              | The right SHIFT key                                                       |
-| `control`             | Either left or right CTRL key                                             |
-| `lctrl`               | The left CTRL key                                                         |
-| `rctrl`               | The right CTRL key                                                        |
-| `alt`                 | Either left or right ALT key                                              |
-| `lalt`                | The left ALT key                                                          |
-| `ralt`                | The right ALT key                                                         |
-| `lwin`                | The left ⊞ Windows logo key                                               |
-| `rwin`                | The right ⊞ Windows logo key                                              |
-| `space`               | The spacebar key                                                          |
-| `escape`              | The ESCAPE key                                                            |
-| `back`                | The BACKSPACE key                                                         |
-| `tab`                 | The TAB key                                                               |
-| `enter`               | The ENTER key                                                             |
-| `left`                | The ← arrow key                                                           |
-| `right`               | The → arrow key                                                           |
-| `up`                  | The ↑ arrow key                                                           |
-| `down`                | The ↓ arrow key                                                           |
-| `num_lock`            | The NUM LOCK key                                                          |
-| `scroll_lock`         | The SCROLL LOCK key                                                       |
-| `caps_lock`           | The CAPS LOCK key                                                         |
-| `page_up`             | The PAGE UP key                                                           |
-| `page_down`           | The PAGE DOWN key                                                         |
-| `insert`              | The INSERT key                                                            |
-| `delete`              | The DELETE key                                                            |
-| `end`                 | The END key                                                               |
-| `home`                | The HOME key                                                              |
-| `print_screen`        | The PRINT SCREEN key                                                      |
-| `multiply`            | The `*` key (only on numpad)                                              |
-| `add`                 | The `+` key (only on numpad)                                              |
-| `subtract`            | The `-` key (only on numpad)                                              |
-| `decimal`             | The DEL key (only on numpad)                                              |
-| `divide`              | The `/` key (only on numpad)                                              |
-| `volume_up`           | The volume up key                                                         |
-| `volume_down`         | The volume down key                                                       |
-| `volume_mute`         | The volume mute key                                                       |
-| `media_next_track`    | The media next track key                                                  |
-| `media_prev_track`    | The media prev track key                                                  |
-| `media_stop`          | The media stop key                                                        |
-| `media_play_pause`    | The media play/pause key                                                  |
-| `oem_semicolon`       | The `;`/`:` key on a US standard keyboard (varies by keyboard)            |
-| `oem_question`        | The `/`/`?` key on a US standard keyboard (varies by keyboard)            |
-| `oem_tilde`           | The `` ` ``/`~` key on a US standard keyboard (varies by keyboard)        |
-| `oem_open_brackets`   | The `[`/`{` key on a US standard keyboard (varies by keyboard)            |
-| `oem_pipe`            | The `\`/`\|` key on a US standard keyboard (varies by keyboard)           |
-| `oem_close_brackets`  | The `]`/`}` key on a US standard keyboard (varies by keyboard)            |
-| `oem_quotes`          | The `'`/`"` key on a US standard keyboard (varies by keyboard)            |
-| `oem_8`               | The `` ` ``/`¬` key on a UK keyboard (varies by keyboard)                 |
-| `oem_102`             | The `\`/`\|` key next to left Shift on ISO keyboards (varies by keyboard) |
-| `oem_plus`            | The `=`/`+` key on a US standard keyboard (varies by keyboard)            |
-| `oem_comma`           | The `,`/`<` key on a US standard keyboard (varies by keyboard)            |
-| `oem_minus`           | The `-`/`_` key on a US standard keyboard (varies by keyboard)            |
-| `oem_period`          | The `.`/`>` key on a US standard keyboard (varies by keyboard)            |
-| `muhenkan`            | The 無変換 (non-convert) key for Japanese keyboard layouts                |
-| `henkan`              | The 変換 (convert) key for Japanese keyboard layouts                      |
+## How it works
 
-</details>
+- Everything lives in a self-contained module:
+  [`packages/wm/src/stage_manager/`](./packages/wm/src/stage_manager). The panel
+  is a [Slint](https://slint.dev) UI (femtovg renderer) running on a dedicated
+  thread inside the WM process; WM and panel exchange messages over an
+  in-process channel — no extra IPC surface.
+- Thumbnails are captured with `PrintWindow` from the real window *before* it is
+  minimized, so cards show true content; windows with no cached capture fall
+  back to a large app icon on a dark card.
+- Only a handful of lines hook into upstream event paths (window managed /
+  manually focused / minimize-ended, config reload, command routing). Each hook
+  is a no-op unless stage mode is active, so upstream behavior is untouched.
+  Full design notes: [docs/STAGE_MANAGER_DESIGN.md](./docs/STAGE_MANAGER_DESIGN.md).
 
-If a key is not in the list above, it is likely still supported if you use its character in a keybinding (e.g. `alt+å` for the Norwegian Å character).
+## Known limitations
 
-> German and US international keyboards treat the right-side alt key differently. For these keyboard layouts, use `ralt+ctrl` instead of `ralt` to bind the right-side alt key.
+- Windows 11 only (the panel and the sweep use Win11-era APIs; the mode is
+  simply not offered elsewhere). Multi-monitor: stage manager manages the
+  **primary monitor only**.
+- Thumbnails are snapshots taken at minimize time. A window that was already
+  minimized *before GlazeWM started* shows the icon fallback until it is
+  restored and minimized by stage mode once.
+- DWM-cloaked phantom windows (UWP placeholders, some tray windows) are filtered
+  out of the card list, same as the taskbar does.
 
-### Config: Gaps
+## Build from source
 
-The gaps between windows can be changed via the `gaps` property in the config file. Inner and outer gaps are set separately.
+Prerequisites: Rust stable toolchain and the Windows 11 SDK.
+
+```powershell
+git clone https://github.com/Vossk123/glazewm.git
+cd glazewm
+git checkout stage-manager
+cargo build --release -p wm        # output: target\release\glazewm.exe
+```
+
+Set `VERSION_NUMBER` at build time to stamp the version
+(`$env:VERSION_NUMBER="3.10.1"; cargo build --release -p wm`).
+
+## License
+
+GPL-3.0 — same license as upstream [GlazeWM](https://github.com/glzr-io/glazewm),
+copyright of the original work belongs to its authors. This fork adds the
+stage-manager module and a few integration hooks on top of upstream v3.10.1.
+
+---
+
+<a id="中文说明"></a>
+
+## 中文说明
+
+本仓库是 [GlazeWM](https://github.com/glzr-io/glazewm)（Windows 平铺式窗口管理器）
+v3.10.1 的 fork，为其新增了一个类 macOS **台前调度（Stage Manager）** 的单窗口模式，
+仅面向 Windows 11。上游的全部平铺功能保持原样，新功能完全可选、默认关闭。
+
+### 功能特性
+
+- **桌面只保留一个窗口。** 开启台前调度后，当其他窗口获得焦点（Alt+Tab、新程序启动、
+  点击卡片等），原本在前台的窗口会自动最小化，桌面同一时刻只有一个应用窗口可见。
+- **切换丝滑。** 离场窗口先最小化、目标窗口后显示，并有"前台夺回守卫"——刚被最小化的
+  程序若抢回前台会被立即纠正，尽量避免两个窗口同时出现在桌面。
+- **侧边卡片面板。** 停靠于屏幕左/右缘的悬浮面板列出所有**已最小化**的任务栏窗口
+  （当前焦点窗口永远不显示）。卡片缩略图取自窗口最小化前的真实画面；暂无缩略图时
+  回退为应用图标卡片。
+- **点卡片即切换。** 点击卡片：目标窗口恢复并获焦，你正在用的窗口先最小化并生成新卡片。
+- **一个快捷键开关。** 开关命令可任意绑定键位，也可用 CLI：
+  `glazewm command toggle-stage-manager`。
+- **面板不抢焦点。** 无任务栏按钮、不进入 Alt+Tab、不激活不抢焦点。
+- **智能豁免。** 与焦点窗口同进程 / 同标题 / 全屏的窗口以及白名单窗口永不被最小化
+  （可以共存显示；一旦最小化即照常出现在卡片面板上）。
+
+关闭台前调度后，GlazeWM 行为与上游完全一致。
+
+### 快速开始
+
+1. 获取二进制：自行构建（见下方），或使用 release 页面提供的 `glazewm.exe`。
+2. 安装：先 `glazewm command wm-exit` 退出，备份原程序，再覆盖主程序
+   （官方安装的 CLI 与 watcher 可继续保留，IPC 协议未改动）：
+
+   ```powershell
+   Stop-Process -Name glazewm -Force
+   Copy-Item 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe.bak'
+   Copy-Item .\glazewm.exe 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' -Force
+   Start-Process 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe'
+   ```
+
+3. 配置 `~\.glzr\glazewm\config.yaml`：
+
+   ```yaml
+   keybindings:
+     - context: wm
+       bind: alt + shift + m
+       command: toggle-stage-manager
+
+   stage_manager:
+     enabled: true   # 启动 GlazeWM 时自动进入台前调度；不写/false = 默认关闭
+     side: right     # 面板停靠侧: left | right
+     size: medium    # 面板大小: small | medium | large
+   ```
+
+4. `glazewm command wm-reload-config` 重载配置，按 `alt + shift + m` 开关。
+
+### 配置项一览
+
+所有新参数都在配置文件的 `stage_manager` 段，均可省略（下表为默认值）：
+
+| 参数                 | 取值                                | 默认值   | 说明                                                       |
+| -------------------- | ----------------------------------- | -------- | ---------------------------------------------------------- |
+| `enabled`            | `true` / `false`                    | `false`  | GlazeWM 启动时自动开启台前调度。                           |
+| `side`               | `left` / `right`                    | `right`  | 面板停靠的主显示器边缘。                                   |
+| `size`               | `small` / `medium` / `large`        | `medium` | 面板档位（卡片宽 160 / 216 / 280 px）；放不下时卡片自动收窄。 |
+| `opacity`            | `0.0` – `1.0`                       | `0.85`   | 卡片背景不透明度。                                         |
+| `spacing`            | 像素                                | `10`     | 卡片纵向间距。                                             |
+| `corner_radius`      | 像素                                | `12`     | 卡片圆角半径。                                             |
+| `hide_on_fullscreen` | `true` / `false`                    | `true`   | 焦点窗口全屏时自动隐藏面板。                               |
+| `exempt_same_process`| `true` / `false`                    | `true`   | 永不最小化与焦点窗口同进程的窗口。                         |
+| `exempt_same_title`  | `true` / `false`                    | `true`   | 永不最小化与焦点窗口同标题的窗口。                         |
+| `exempt_fullscreen`  | `true` / `false`                    | `true`   | 永不最小化全屏窗口。                                       |
+| `whitelist`          | 匹配规则列表                        | `[]`     | 命中任一规则的窗口永不被最小化（与 `window_rules` 同款匹配器）。 |
+
+白名单示例：
 
 ```yaml
-gaps:
-  # Gap between adjacent windows.
-  inner_gap: "20px"
-
-  # Gap between windows and the screen edge.
-  outer_gap:
-    top: "20px"
-    right: "20px"
-    bottom: "20px"
-    left: "20px"
+stage_manager:
+  whitelist:
+    - window_process: { equals = "obs64" }
+    - window_title: { regex = "任务管理器" }
+    - window_class: { includes = "Chrome_WidgetWin" }
 ```
 
-### Config: Workspaces
+行为说明：
 
-Workspaces need to be predefined via the `workspaces` property in the config file. A workspace is automatically assigned to each monitor on startup.
+- 关闭台前调度只会停止"最小化其他窗口"的规则，**不会**把已最小化的窗口自动放回桌面——
+  这是刻意设计，避免关闭瞬间旧窗口砸回桌面。
+- 被豁免的共存窗口（例如额外打开的资源管理器窗口）可以与焦点窗口同时显示；
+  它们只有在被最小化后才会出现在卡片面板上。
 
-```yaml
-workspaces:
-  # This is the unique ID for the workspace. It's used in keybinding
-  # commands, and is also the label shown in 3rd-party apps (e.g. Zebar) if
-  # `display_name` is not provided.
-  - name: "1"
+### 实现要点
 
-    # Optional override for the workspace label used in 3rd-party apps.
-    # Does not need to be unique.
-    display_name: "Work"
+- 全部新代码集中在自包含模块
+  [`packages/wm/src/stage_manager/`](./packages/wm/src/stage_manager)：面板是基于
+  [Slint](https://slint.dev)（femtovg 渲染器）的 UI，运行在 WM 进程内的独立线程，
+  两者通过进程内通道通信，不引入任何新的 IPC 面。
+- 缩略图在窗口最小化**之前**用 `PrintWindow` 抓取真实画面，卡片显示真实内容；
+  无缓存时回退为深色底大图标。
+- 对上游事件路径仅加了极少量挂接点（窗口托管 / 手动聚焦 / 最小化结束、配置重载、
+  命令路由），每个挂接点在台前调度关闭时都是空操作，上游行为零改动。
+  完整设计文档：[docs/STAGE_MANAGER_DESIGN.md](./docs/STAGE_MANAGER_DESIGN.md)。
 
-    # Optionally force the workspace on a specific monitor if it exists.
-    # 0 is your leftmost screen, 1 is the next one to the right, and so on.
-    bind_to_monitor: 0
+### 已知限制
 
-    # Optionally prevent workspace from being deactivated when empty.
-    keep_alive: false
+- 仅支持 Windows 11；多显示器场景只管理**主显示器**。
+- 缩略图是"最小化瞬间"的快照。在 GlazeWM 启动前就已最小化的窗口会先显示图标卡片，
+  直到它被台前调度完整经历一次"恢复→最小化"。
+- 与任务栏一致地过滤 DWM 隐身幽灵窗口（UWP 占位窗等）。
+
+### 从源码构建
+
+前置：Rust stable 工具链 + Windows 11 SDK。
+
+```powershell
+git clone https://github.com/Vossk123/glazewm.git
+cd glazewm
+git checkout stage-manager
+cargo build --release -p wm        # 产物: target\release\glazewm.exe
 ```
 
-### Config: Window rules
+构建时设置 `VERSION_NUMBER` 可写入版本号
+（`$env:VERSION_NUMBER="3.10.1"; cargo build --release -p wm`）。
 
-Commands can be run when a window is first launched. This is useful for adding window-specific behaviors like always starting a window as fullscreen or assigning to a specific workspace.
+### 许可证
 
-Windows can be targeted by their process, class, and title. Multiple matching criteria can be used together to target a window more precisely.
-
-```yaml
-window_rules:
-  - commands: ["move --workspace 1"]
-    match:
-      # Move browsers to workspace 1.
-      - window_process: { regex: "msedge|brave|chrome" }
-
-  - commands: ["ignore"]
-    match:
-      # Ignores any Zebar windows.
-      - window_process: { equals: "zebar" }
-
-      # Ignores picture-in-picture windows for browsers.
-      # Note that *both* the title and class must match for the rule to run.
-      - window_title: { regex: "[Pp]icture.in.[Pp]icture" }
-        window_class: { regex: "Chrome_WidgetWin_1|MozillaDialogClass" }
-```
-
-### Config: Window effects
-
-Visual effects can be applied to windows via the `window_effects` option. Currently, colored borders are the only effect available with more to come in the future.
-
-> Note: Window effects are exclusive to Windows 11.
-
-```yaml
-window_effects:
-  # Visual effects to apply to the focused window.
-  focused_window:
-    # Highlight the window with a colored border.
-    border:
-      enabled: true
-      color: "#0000ff"
-
-  # Visual effects to apply to non-focused windows.
-  other_windows:
-    border:
-      enabled: false
-      color: "#d3d3d3"
-```
-
-### Config: Window behavior
-
-The `window_behavior` config option exists to customize the states that a window can be in (`tiling`, `floating`, `minimized`, and `fullscreen`).
-
-```yaml
-window_behavior:
-  # New windows are created in this state whenever possible.
-  # Allowed values: 'tiling', 'floating'.
-  initial_state: "tiling"
-
-  # Sets the default options for when a new window is created. This also
-  # changes the defaults for when the state change commands, like
-  # `set-floating`, are used without any flags.
-  state_defaults:
-    floating:
-      # Whether to center floating windows by default.
-      centered: true
-
-      # Whether to show floating windows as always on top.
-      shown_on_top: false
-
-    fullscreen:
-      # Maximize the window if possible. If the window doesn't have a
-      # maximize button, then it'll be made fullscreen normally instead.
-      maximized: false
-```
-
-### Config: Binding modes
-
-Binding modes are used to modify keybindings while GlazeWM is running.
-
-A binding mode can be enabled with `wm-enable-binding-mode --name <NAME>` and disabled with `wm-disable-binding-mode --name <NAME>`.
-
-```yaml
-binding_modes:
-  # When enabled, the focused window can be resized via arrow keys or HJKL.
-  - name: "resize"
-    keybindings:
-      - commands: ["resize --width -2%"]
-        bindings: ["h", "left"]
-      - commands: ["resize --width +2%"]
-        bindings: ["l", "right"]
-      - commands: ["resize --height +2%"]
-        bindings: ["k", "up"]
-      - commands: ["resize --height -2%"]
-        bindings: ["j", "down"]
-      # Press enter/escape to return to default keybindings.
-      - commands: ["wm-disable-binding-mode --name resize"]
-        bindings: ["escape", "enter"]
-```
-
-## FAQ
-
-**Q: How do I run GlazeWM on startup?**
-
-Right-click the GlazeWM icon in the system tray and select "Run on system startup".
-
-**Q: How can I create `<insert layout>`?**
-
-You can create custom layouts by changing the tiling direction with `alt+v`. This changes where the next window is placed _in relation to the current window_. If the current window's direction is horizontal, the new window will be placed to the right of it. If it is vertical, it will be placed below it. This also applies when moving windows; the tiling direction of the stationary window will affect where the moved window will be placed.
-
-Community-made scripts like [Dutch-Raptor/GAT-GWM](https://github.com/Dutch-Raptor/GAT-GWM) and [burgr033/GlazeWM-autotiling-python](https://github.com/burgr033/GlazeWM-autotiling-python) can be used to automatically change the tiling direction. Native support for automatic layouts isn't _currently_ supported.
-
-**Q: How do I create a rule for `<insert application>`?**
-
-To match a specific application, you need a command to execute and either the window's process name, title, or class name. For example, if you use Flow-Launcher and want to make the settings window float, you can do the following:
-
-```yaml
-window_rules:
-  - commands: ["set-floating"]
-    match:
-      - window_process: { equals: "Flow.Launcher" }
-        window_title: { equals: "Settings" }
-```
-
-Programs like Winlister or AutoHotkey's Window Spy can be useful for getting info about a window.
-
-**Q: How can I ignore GlazeWM's keybindings when `<insert application>` is focused?**
-
-This isn't currently supported, however, the keybinding `alt+shift+p` in the default config is used to disable all other keybindings until `alt+shift+p` is pressed again.
-
-[discord-badge]: https://img.shields.io/discord/1041662798196908052.svg?logo=discord&colorB=7289DA
-[discord-link]: https://discord.gg/ud6z3qjRvM
-[downloads-badge]: https://img.shields.io/github/downloads/glzr-io/glazewm/total?logo=github&logoColor=white
-[downloads-link]: https://github.com/glzr-io/glazewm/releases
-[issues-badge]: https://img.shields.io/badge/good_first_issues-7057ff
-[issues-link]: https://github.com/orgs/glzr-io/projects/4/views/1?sliceBy%5Bvalue%5D=good+first+issue
-[demo-video]: resources/assets/demo.webp
+GPL-3.0，与上游 [GlazeWM](https://github.com/glzr-io/glazewm) 一致；原始作品的
+版权归其作者所有。本 fork 在上游 v3.10.1 之上添加了 stage_manager 模块与少量挂接点。
