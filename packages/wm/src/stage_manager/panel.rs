@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -46,7 +46,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::{
   capture::{self, CapturedImage},
-  PanelMsg, PanelToWm, CAPTURE_MAX_DIM, PANEL_TITLE,
+  PanelMsg, PanelToWm, PANEL_TITLE,
 };
 
 slint::include_modules!();
@@ -90,8 +90,6 @@ struct PanelState {
   /// Stable card slots: HWNDs in first-seen order, surviving focus changes.
   order: Vec<isize>,
   prev_enum: Vec<isize>,
-  hovered: isize,
-  last_hover_capture: Instant,
   enum_tick: u32,
   styled: bool,
   visible: bool,
@@ -141,8 +139,6 @@ fn run_panel(
     icons: HashMap::new(),
     order: Vec::new(),
     prev_enum: Vec::new(),
-    hovered: -1,
-    last_hover_capture: Instant::now() - Duration::from_secs(60),
     enum_tick: 0,
     styled: false,
     visible: true,
@@ -189,39 +185,6 @@ fn run_panel(
       }
 
       let _ = window.focus();
-    }
-  });
-
-
-  ui.global::<Stage>().on_card_hovered({
-    let state = state.clone();
-    move |value| {
-      let mut state = state.borrow_mut();
-      match value {
-        // Entering card `value`.
-        idx if idx >= 0 => {
-          state.hovered = state
-            .hwnds
-            .get(usize::try_from(idx).unwrap_or(usize::MAX))
-            .copied()
-            .unwrap_or(-1);
-          state.last_hover_capture =
-            Instant::now() - Duration::from_secs(60);
-        }
-        // Leaving the encoded card - clear hover only if it is still the
-        // hovered one (event order between cards is not guaranteed).
-        encoded if encoded <= -2 => {
-          let left = state
-            .hwnds
-            .get(usize::try_from(-encoded - 2).unwrap_or(usize::MAX))
-            .copied()
-            .unwrap_or(-1);
-          if state.hovered == left {
-            state.hovered = -1;
-          }
-        }
-        _ => (),
-      }
     }
   });
 
@@ -315,7 +278,6 @@ fn run_panel(
         refresh(&ui, &state, &dispatcher, false);
       }
 
-      refresh_hovered(&state);
       update_geometry(&ui, &state, &dispatcher);
       style_panel_window(&mut state.borrow_mut());
     }
@@ -490,42 +452,6 @@ fn refresh(
   });
 }
 
-/// Re-captures the hovered window's thumbnail while it stays visible.
-fn refresh_hovered(state: &Rc<RefCell<PanelState>>) {
-  let (hovered, interval) = {
-    let state = state.borrow();
-    (state.hovered, state.cfg.hover_refresh_ms)
-  };
-  if hovered < 0 {
-    return;
-  }
-
-  {
-    let state = state.borrow();
-    if state.last_hover_capture.elapsed()
-      < Duration::from_millis(u64::from(interval))
-    {
-      return;
-    }
-  }
-
-  let window = NativeWindow::from_handle(hovered);
-  if !window.is_valid()
-    || window.is_minimized().unwrap_or(true)
-    || !window.is_visible().unwrap_or(false)
-  {
-    return;
-  }
-
-  state.borrow_mut().last_hover_capture = Instant::now();
-
-  let Some(image) = capture::capture_window(hovered, CAPTURE_MAX_DIM) else {
-    return;
-  };
-
-  set_card_thumb(state, hovered, image_to_slint(image));
-}
-
 /// Applies a snapshot pushed by the WM engine (taken right before a window
 /// gets minimized) to the matching card, if present.
 fn apply_snapshot(state: &Rc<RefCell<PanelState>>, hwnd: isize, image: CapturedImage) {
@@ -679,7 +605,6 @@ fn update_geometry(
   }
 
   let global = ui.global::<Stage>();
-  global.set_card_width(card_width);
   global.set_card_height(card_height);
   global.set_spacing(spacing);
   global.set_corner(corner);

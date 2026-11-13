@@ -361,9 +361,6 @@ stage_manager:
   exempt_same_title: true
   exempt_fullscreen: true
 
-  # Interval in ms for refreshing the hovered card's live thumbnail.
-  hover_refresh_ms: 150
-
   # Windows matching any of these rules are never minimized. Rules use
   # the same `window_process` / `window_class` / `window_title` matchers
   # as `window_rules` (string = equals, { regex = ... }, { includes = ... }

@@ -351,9 +351,6 @@ pub struct StageManagerConfig {
   #[serde(default = "default_bool::<true>")]
   pub exempt_fullscreen: bool,
 
-  /// Live-thumbnail refresh interval while hovering a card, in ms.
-  pub hover_refresh_ms: u32,
-
   /// Windows matching any of these rules are never minimized.
   pub whitelist: Vec<WindowMatchConfig>,
 }
@@ -371,7 +368,6 @@ impl Default for StageManagerConfig {
       exempt_same_process: true,
       exempt_same_title: true,
       exempt_fullscreen: true,
-      hover_refresh_ms: 150,
       whitelist: Vec::new(),
     }
   }

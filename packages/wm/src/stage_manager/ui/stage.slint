@@ -14,7 +14,6 @@ export struct StageCard {
 
 export global Stage {
     in property <[StageCard]> cards;
-    in property <length> card-width: 216px;
     in property <length> card-height: 148px;
     in property <length> spacing: 10px;
     in property <length> corner: 12px;
@@ -22,7 +21,6 @@ export global Stage {
     in property <string> status: "";
 
     callback card-clicked(int);
-    callback card-hovered(int);
 }
 
 export component StagePanel inherits Window {
@@ -124,14 +122,6 @@ export component StagePanel inherits Window {
             ta := TouchArea {
                 clicked => {
                     Stage.card-clicked(idx);
-                }
-
-                changed has-hover => {
-                    // Encode: enter -> idx, leave -> -(idx + 2) so the host
-                    // can clear hover only when the leaving card is still
-                    // the hovered one (event order between cards is not
-                    // guaranteed).
-                    Stage.card-hovered(ta.has-hover ? idx : -idx - 2);
                 }
             }
         }

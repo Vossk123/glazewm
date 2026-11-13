@@ -18,7 +18,6 @@ feature is off (and the added config section is ignored by the official build).
 | `exempt_same_process` | bool | true | don't minimize windows sharing the focused window's process |
 | `exempt_same_title` | bool | true | don't minimize windows with identical title |
 | `exempt_fullscreen` | bool | true | never minimize fullscreen windows |
-| `hover_refresh_ms` | int | 150 | live thumbnail refresh interval on hover |
 | `whitelist` | list of window matches | [] | never minimize matching apps |
 
 Hotkey: new `toggle-stage-manager` command usable anywhere other commands are
@@ -45,7 +44,7 @@ Hotkey: new `toggle-stage-manager` command usable anywhere other commands are
   `check_is_manageable` gains an own-process guard so the panel can never be tiled.
 - Thumbnails: `PrintWindow(PW_RENDERFULLCONTENT)` + DWM extended-frame crop +
   blank detection + box downscale to <= 640 px. Fresh snapshot taken at minimize
-  time (window still visible); hover on a visible card re-captures live.
+  time (window still visible).
 - Toggle off: engine stops; minimized windows stay as-is (per user decision).
 - `stage_manager` config reload -> `PanelMsg::Reload` (visuals only, no restart).
 
