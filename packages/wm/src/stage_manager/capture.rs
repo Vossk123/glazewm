@@ -479,9 +479,27 @@ fn capture_from_bits(
     }
   }
 
-  // Windows rendered as fully blank (common for some GPU-composited
-  // surfaces) - signal the caller to use a placeholder card instead.
-  if !has_content {
+  // Uniform flat fills are as useless as a black frame: `PrintWindow`
+  // on a minimized window (no DWM surface anymore) yields a single
+  // solid color, and GPU-composited windows that ignore the
+  // print pass render one too. Treat them as blank so the card shows
+  // its fallback instead.
+  let mut min_rgb = [255u8; 3];
+  let mut max_rgb = [0u8; 3];
+  for pixel in rgba.chunks_exact(4) {
+    for channel in 0..3 {
+      min_rgb[channel] = min_rgb[channel].min(pixel[channel]);
+      max_rgb[channel] = max_rgb[channel].max(pixel[channel]);
+    }
+  }
+  let uniform = (0..3).all(|channel| {
+    i32::from(max_rgb[channel]) - i32::from(min_rgb[channel]) <= 8
+  });
+
+  // Windows rendered as fully blank or flat (common for minimized and
+  // some GPU-composited surfaces) - signal the caller to use a
+  // placeholder card instead.
+  if !has_content || uniform {
     return None;
   }
 
@@ -490,4 +508,46 @@ fn capture_from_bits(
     height: out_h,
     rgba,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::capture_from_bits;
+
+  fn capture(bgra: &[u8], width: u32, height: u32) -> Option<super::CapturedImage> {
+    capture_from_bits(bgra.as_ptr(), width, height, 0, 0, width, height, 64)
+  }
+
+  #[test]
+  fn flat_fill_counts_as_blank() {
+    let width = 8;
+    let height = 8;
+    let mut bgra = vec![0u8; (width * height * 4) as usize];
+    for pixel in bgra.chunks_exact_mut(4) {
+      pixel.copy_from_slice(&[160, 160, 160, 255]);
+    }
+    assert!(capture(&bgra, width, height).is_none());
+  }
+
+  #[test]
+  fn black_counts_as_blank() {
+    let width = 8;
+    let height = 8;
+    let bgra = vec![0u8; (width * height * 4) as usize];
+    assert!(capture(&bgra, width, height).is_none());
+  }
+
+  #[test]
+  fn varied_content_is_kept() {
+    let width = 8;
+    let height = 8;
+    let mut bgra = vec![0u8; (width * height * 4) as usize];
+    for (i, pixel) in bgra.chunks_exact_mut(4).enumerate() {
+      if i % 2 == 0 {
+        pixel.copy_from_slice(&[200, 40, 60, 255]);
+      }
+    }
+    let captured = capture(&bgra, width, height);
+    assert!(captured.is_some());
+  }
 }

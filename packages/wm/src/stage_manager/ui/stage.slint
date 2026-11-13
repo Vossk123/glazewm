@@ -61,7 +61,9 @@ export component StagePanel inherits Window {
                 source: card.thumb;
             }
 
-            // Placeholder when no thumbnail is available.
+            // Fallback when no thumbnail is available: the app icon
+            // centered on the accent color, or the title's initial when
+            // the icon capture failed too.
             if !card.has-thumb: Rectangle {
                 x: 0;
                 y: 0;
@@ -69,7 +71,15 @@ export component StagePanel inherits Window {
                 height: parent.height - 36px;
                 background: card.accent;
 
-                Text {
+                if card.has-icon: Image {
+                    width: min(64px, parent.height - 24px);
+                    height: self.width;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    source: card.icon;
+                }
+
+                if !card.has-icon: Text {
                     text: card.initial;
                     font-size: 30px;
                     color: white;

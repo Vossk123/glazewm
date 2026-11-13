@@ -62,7 +62,11 @@ const PARK_Y: f32 = -32_000.0;
 /// Ticks between structural re-enumerations (~300ms).
 const ENUM_TICKS: u32 = 3;
 /// Card icon size in logical pixels (rendered supersampled x2).
-const ICON_SIZE: u32 = 40;
+///
+/// The same image doubles as the large centered fallback artwork when a
+/// card has no thumbnail (e.g. windows minimized before the WM started),
+/// so it is captured larger than the title-bar icon's render size.
+const ICON_SIZE: u32 = 64;
 
 /// Logical card width for a size preset (px).
 fn card_width_for(size: StageSize) -> f32 {
@@ -446,18 +450,14 @@ fn refresh(
 
   let mut cards = Vec::with_capacity(enumerated.len());
   for (hwnd, title, process) in &enumerated {
-    let cached = state.borrow().thumbs.get(hwnd).cloned();
-    let thumb = match cached {
-      Some(image) => Some(image),
-      None => {
-        let captured = capture::capture_window(*hwnd, CAPTURE_MAX_DIM);
-        captured.map(|image| {
-          let image = image_to_slint(image);
-          state.borrow_mut().thumbs.insert(*hwnd, image.clone());
-          image
-        })
-      }
-    };
+    // Card windows are always minimized here, and `PrintWindow` on a
+    // minimized window only ever produces degenerate output (a flat
+    // fill or the small icon cluster Windows draws for it) - so no
+    // fresh capture is attempted. Thumbnails come from the snapshot
+    // pushed while the window was still visible (sweep) or from an
+    // earlier hover capture; without one the card shows the icon
+    // fallback.
+    let thumb = state.borrow().thumbs.get(hwnd).cloned();
 
     let cached_icon = state.borrow().icons.get(hwnd).cloned();
     let icon = match cached_icon {
@@ -563,8 +563,9 @@ fn set_card_thumb(
   state.cards.set_row_data(pos, card);
 }
 
-/// Builds a card with a thumbnail, or a placeholder based on the title's
-/// first char and a process-derived accent color.
+/// Builds a card with a thumbnail, or a fallback of the app icon (or the
+/// title's first char, plus a process-derived accent color) over a flat
+/// accent rectangle.
 fn build_card(
   title: &str,
   process: &str,
