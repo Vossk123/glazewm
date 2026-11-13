@@ -50,7 +50,9 @@ When stage mode is off, GlazeWM behaves exactly like upstream.
 
 ## Quick start
 
-1. **Get the binaries.** Download an installer from this fork's
+1. **Get the binaries.** Download the installer — or the portable zip with the
+   raw `glazewm.exe`/`glazewm-cli.exe`/`glazewm-watcher.exe` for the drop-in
+   upgrade below — from this fork's
    [Releases](https://github.com/Vossk123/glazewm/releases), or build from
    source (see [Build](#build-from-source)). Installers are **unsigned** (a
    personal fork has no code-signing certificate), so SmartScreen shows a
@@ -216,7 +218,9 @@ v3.10.1 的 fork，为其新增了一个类 macOS **台前调度（Stage Manager
 ### 快速开始
 
 1. 获取二进制：从本 fork 的 [Releases](https://github.com/Vossk123/glazewm/releases)
-   页面下载安装包，或自行构建（见下方）。安装包**未签名**（个人 fork 无签名证书），
+   页面下载图形安装器，或下载**便携包 zip**（内含裸 `glazewm.exe`/`glazewm-cli.exe`/
+   `glazewm-watcher.exe`，正好用于下方第 2 步的覆盖升级），也可自行构建（见下方）。
+   安装包**未签名**（个人 fork 无签名证书），
    首次运行 SmartScreen 会弹"Windows 已保护你的电脑"，点"更多信息 → 仍要运行"即可。
 2. 安装：先 `glazewm command wm-exit` 退出，备份原程序，再覆盖主程序**和** CLI
    （fork 的 CLI 增加了台前调度子命令；官方安装的 watcher 可继续保留，IPC

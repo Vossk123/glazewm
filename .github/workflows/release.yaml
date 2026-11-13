@@ -65,13 +65,47 @@ jobs:
           pattern: package-*
           merge-multiple: true
 
-      - name: Rename installers
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: build-*
+
+      # Release assets: the universal installer plus one portable zip per
+      # architecture (raw binaries for drop-in upgrades). The standalone
+      # MSIs are intentionally not published - the bundle covers both archs.
+      - name: Stage release assets
         env:
           VERSION: v${{ needs.meta.outputs.release_version }}
         run: |
           mv installer-universal.exe "glazewm-$VERSION.exe"
-          mv installer-arm64.msi "standalone-glazewm-$VERSION-arm64.msi"
-          mv installer-x64.msi "standalone-glazewm-$VERSION-x64.msi"
+          X64_DIR="build-x86_64-pc-windows-msvc/temp/target/x86_64-pc-windows-msvc/release"
+          ARM_DIR="build-aarch64-pc-windows-msvc/temp/target/aarch64-pc-windows-msvc/release"
+          (cd "$X64_DIR" && zip -q "$GITHUB_WORKSPACE/glazewm-$VERSION-portable-win-x64.zip" \
+            glazewm.exe glazewm-cli.exe glazewm-watcher.exe)
+          (cd "$ARM_DIR" && zip -q "$GITHUB_WORKSPACE/glazewm-$VERSION-portable-win-arm64.zip" \
+            glazewm.exe glazewm-cli.exe glazewm-watcher.exe)
+          ls -la . "$X64_DIR" "$ARM_DIR"
+
+      - name: Write release notes
+        env:
+          VERSION: v${{ needs.meta.outputs.release_version }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          __VERSION__
+
+          ## 文件用法 / Release files
+
+          **中文**
+
+          - `glazewm-__VERSION__.exe` — **标准图形安装器**（Universal，运行时自动选择 x64/arm64）。双击安装，会直接覆盖官方 GlazeWM（同一升级代码），附带 Zebar 与开机自启。本 fork 无代码签名证书，SmartScreen 拦截时选「更多信息 → 仍要运行」。
+          - `glazewm-__VERSION__-portable-win-x64.zip`（Intel/AMD）与 `-arm64.zip`（ARM）— **便携包**，适合已安装 GlazeWM 的覆盖升级：先 `glazewm command wm-exit` 退出，再解压覆盖 `C:\Program Files\glzr.io\GlazeWM\` 下的 `glazewm.exe`、`glazewm-watcher.exe` 与 `cli\glazewm.exe`（目录写入需要管理员权限）。
+
+          **English**
+
+          - `glazewm-__VERSION__.exe` — **standard graphical installer** (Universal; picks x64/arm64 at runtime). Installs over the official GlazeWM (same upgrade code), bundles Zebar and the autostart entry. Unsigned - if SmartScreen blocks it, choose "More info" → "Run anyway".
+          - `glazewm-__VERSION__-portable-win-x64.zip` / `-arm64.zip` — **portable packages** for drop-in upgrades when GlazeWM is already installed: exit the WM with `glazewm command wm-exit`, then overwrite `glazewm.exe`, `glazewm-watcher.exe` and `cli\glazewm.exe` under `C:\Program Files\glzr.io\GlazeWM\` (admin rights required).
+          EOF
+          sed -i "s/__VERSION__/$VERSION/g" release-notes.md
 
       - name: Create release
         env:
@@ -80,7 +114,7 @@ jobs:
         run: |
           gh release create "$VERSION" \
             --title "$VERSION" \
-            --generate-notes \
-            "./glazewm-$VERSION.exe#$VERSION for Windows (standard)" \
-            "./standalone-glazewm-$VERSION-arm64.msi#$VERSION for Windows (standalone, arm64)" \
-            "./standalone-glazewm-$VERSION-x64.msi#$VERSION for Windows (standalone, x64)"
+            --notes-file release-notes.md \
+            "./glazewm-$VERSION.exe#$VERSION installer for Windows (universal)" \
+            "./glazewm-$VERSION-portable-win-x64.zip#$VERSION portable x64 (drop-in upgrade)" \
+            "./glazewm-$VERSION-portable-win-arm64.zip#$VERSION portable arm64 (drop-in upgrade)"
