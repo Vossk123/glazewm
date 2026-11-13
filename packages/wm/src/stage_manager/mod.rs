@@ -12,11 +12,8 @@
 //! # Platform-specific
 //! - Windows: fully supported (panel thread, thumbnails via
 //!   `PrintWindow`).
-//! - macOS: all entry points are no-ops; enabling logs a warning. The
-//!   Windows-only machinery (panel messages, capture pipeline) still
-//!   compiles there so shared code paths stay type-checked, hence
-//!   `dead_code` is allowed off-Windows.
-#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+//! - Other platforms: unsupported and never built - this fork is
+//!   Windows-only (macOS ships its own Stage Manager).
 
 use std::{
   sync::{
@@ -29,9 +26,7 @@ use std::{
 };
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-#[cfg(target_os = "windows")]
-use tracing::error;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use wm_common::{
   DisplayState, StageManagerConfig, WindowMatchConfig, WindowRuleEvent,
   WindowState, WmEvent,
@@ -151,19 +146,11 @@ impl StageRuntime {
 
   /// Ensures the panel thread exists and shows the panel. No-op if already
   /// active.
-  ///
-  /// On non-Windows platforms this logs a warning and does nothing.
   pub fn enable(
     &mut self,
     config: &StageManagerConfig,
     dispatcher: &Dispatcher,
   ) {
-    #[cfg(not(target_os = "windows"))]
-    {
-      let _ = (self, config, dispatcher);
-      warn!("Stage manager is only supported on Windows.");
-    }
-
     #[cfg(target_os = "windows")]
     {
       if self.active {
@@ -439,7 +426,7 @@ pub fn on_window_focused(
   // minimize. Without re-asserting here, the sweep below would run
   // against the stealer and minimize the actual target instead.
   let sweep_target = state.stage.sweep_target();
-  let hwnd = window_key(window);
+  let hwnd = window.native().id().0;
 
   if sweep_target != 0
     && hwnd != sweep_target
@@ -448,7 +435,7 @@ pub fn on_window_focused(
     let target = state
       .windows()
       .into_iter()
-      .find(|other| window_key(other) == sweep_target);
+      .find(|other| other.native().id().0 == sweep_target);
 
     if let Some(target) = target {
       let target_props = target.native_properties();
@@ -537,7 +524,7 @@ pub fn on_card_activated(
   let Some(mut target) = state
     .windows()
     .into_iter()
-    .find(|window| window_key(window) == hwnd)
+    .find(|window| window.native().id().0 == hwnd)
   else {
     // Window unmanaged (or closed) - no ack, so the panel falls back to
     // restoring/focusing the window natively itself.
@@ -614,28 +601,6 @@ pub fn on_card_activated(
   Ok(())
 }
 
-/// Platform-neutral key of a window for sweep bookkeeping.
-///
-/// Sweep records store window identities as `isize`; this normalizes the
-/// platform-specific `WindowId` (raw `HWND` on Windows, `CGWindowID` on
-/// macOS) into that key space.
-///
-/// # Platform-specific
-/// - Windows: The `HWND` value itself.
-/// - macOS: The `CGWindowID` widened via `TryFrom` (`isize::MIN` fallback
-///   would only matter on 32-bit targets we never ship).
-fn window_key(window: &WindowContainer) -> isize {
-  #[cfg(target_os = "windows")]
-  {
-    window.native().id().0
-  }
-
-  #[cfg(not(target_os = "windows"))]
-  {
-    isize::try_from(window.native().id().0).unwrap_or(0)
-  }
-}
-
 /// Minimizes every managed window except `window`, capturing a fresh
 /// thumbnail of each while it is still visible (so cards never show a
 /// stale or blank image).
@@ -656,12 +621,12 @@ fn minimize_others(
   // Duplicate sweeps for the same target within the debounce window are
   // echoes of the WM's own activation (shell commits, sync-focus);
   // re-running them makes windows ping-pong.
-  if !state.stage.should_sweep(window_key(window)) {
+  if !state.stage.should_sweep(window.native().id().0) {
     info!("Stage sweep skipped: duplicate sweep for {window}.");
     return;
   }
 
-  state.stage.arm_foreground_reclaim(window_key(window));
+  state.stage.arm_foreground_reclaim(window.native().id().0);
   run_sweep(window, state, config);
 }
 

@@ -7,10 +7,6 @@
 //!
 //! Called from the WM thread right before minimizing a window (while the
 //! window is still visible) and from the panel thread for hover refreshes.
-//!
-//! On non-Windows platforms only stubs compile (kept so shared call
-//! sites stay type-checked), hence `dead_code` is allowed there.
-#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
 /// A captured, downscaled window thumbnail in RGBA8.
 #[derive(Clone, Debug)]
@@ -204,15 +200,6 @@ fn crop_bounds(
   }
 }
 
-/// Non-Windows stub so that the module compiles on all platforms.
-#[cfg(not(target_os = "windows"))]
-pub fn capture_window(
-  _hwnd: isize,
-  _max_dim: u32,
-) -> Option<CapturedImage> {
-  None
-}
-
 /// Resolves the window's icon handle.
 ///
 /// Tries `WM_GETICON` (big, then small2) before falling back to the
@@ -386,15 +373,6 @@ pub fn capture_window_icon(
 
     result
   }
-}
-
-/// Non-Windows stub so that the module compiles on all platforms.
-#[cfg(not(target_os = "windows"))]
-pub fn capture_window_icon(
-  _hwnd: isize,
-  _size: u32,
-) -> Option<CapturedImage> {
-  None
 }
 
 /// Builds the final `size x size` RGBA image by un-premultiplying the
