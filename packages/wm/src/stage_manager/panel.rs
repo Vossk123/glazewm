@@ -654,12 +654,15 @@ fn update_geometry(
   let screen_w = bounds.width() as f32 / scale;
   let screen_h = bounds.height() as f32 / scale;
 
-  let (card_width, card_height, spacing, side, corner, count) = {
+  // Must match the card title-bar height in `ui/stage.slint`.
+  const HEADER: f32 = 36.0;
+  let pad = 12.0f32;
+  let avail_h = screen_h - 24.0;
+
+  let (base_width, spacing, side, corner, count) = {
     let state = state.borrow();
-    let card_width = card_width_for(state.cfg.size);
     (
-      card_width,
-      card_width * 9.0 / 16.0 + 26.0,
+      card_width_for(state.cfg.size),
       state.cfg.spacing as f32,
       state.cfg.side,
       state.cfg.corner_radius as f32,
@@ -667,21 +670,41 @@ fn update_geometry(
     )
   };
 
-  let pad = 12.0f32;
+  // Shrink cards proportionally when the column doesn't fit the screen,
+  // so all cards stay visible instead of being clipped.
+  let card_width = if count > 0.0 {
+    let wanted_h = base_width * 9.0 / 16.0 + HEADER;
+    let wanted_col = count * wanted_h + (count - 1.0) * spacing;
+    let max_col = avail_h - 2.0 * pad;
+    if wanted_col > max_col {
+      let card_h = (max_col - (count - 1.0) * spacing) / count;
+      ((card_h - HEADER) * 16.0 / 9.0)
+        .max(96.0)
+        .min(base_width)
+    } else {
+      base_width
+    }
+  } else {
+    base_width
+  };
+  let card_height = card_width * 9.0 / 16.0 + HEADER;
+
   let panel_w = card_width + 2.0 * pad;
-  let raw_h = if count <= 0.0 {
+  let panel_h = if count <= 0.0 {
     pad * 2.0 + 60.0
   } else {
     pad * 2.0 + count * card_height + (count - 1.0) * spacing
-  };
-  let panel_h = raw_h.min(screen_h - 24.0).max(80.0);
+  }
+  .min(avail_h)
+  .max(80.0);
 
   let x = if matches!(side, StageSide::Left) {
     screen_x + 8.0
   } else {
     screen_x + screen_w - panel_w - 8.0
   };
-  let y = screen_y + 12.0;
+  // Center the card column vertically on the screen.
+  let y = screen_y + (screen_h - panel_h) / 2.0;
 
   let geom = (x as i32, y as i32, panel_w as i32, panel_h as i32);
   {

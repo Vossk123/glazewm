@@ -76,9 +76,16 @@ pub fn manage_window(
       if window.state() == WindowState::Tiling {
         window.parent().context("No parent.")?
       } else {
-        window.into()
+        window.clone().into()
       },
     );
+
+    // Stage manager: a brand-new window's focus event can arrive before
+    // the window is managed and get dropped, so the single-window sweep
+    // never runs for it. This mirrors the focus-effect force-update above.
+    if state.stage.is_active() {
+      crate::stage_manager::on_window_focused(&window, state, config);
+    }
   }
 
   Ok(())
@@ -116,6 +123,20 @@ fn check_is_manageable(
       NativeWindowWindowsExt, WS_CAPTION, WS_CHILD, WS_EX_NOACTIVATE,
       WS_EX_TOOLWINDOW,
     };
+
+    // Never manage windows owned by the WM process itself (e.g. the
+    // stage manager card panel).
+    let mut window_pid = 0u32;
+    // SAFETY: Win32 call with a valid HWND and pointer to a local `u32`.
+    unsafe {
+      windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+        native_window.hwnd(),
+        Some(&mut window_pid),
+      );
+    }
+    if window_pid == std::process::id() {
+      return Ok(None);
+    }
 
     // TODO: Temporary fix for managing Flow Launcher until a force manage
     // command is added.

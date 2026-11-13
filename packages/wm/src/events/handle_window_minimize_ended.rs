@@ -29,7 +29,16 @@ pub fn handle_window_minimize_ended(
         .prev_state()
         .unwrap_or(WindowState::default_from_config(&config.value));
 
-      update_window_state(window.clone(), target_state, state, config)?;
+      let restored =
+        update_window_state(window.clone(), target_state, state, config)?;
+
+      // Stage manager: complete a sweep deferred by a focus which raced
+      // this window's restore.
+      crate::stage_manager::on_window_unminimized(
+        &restored,
+        state,
+        config,
+      );
     }
   }
 

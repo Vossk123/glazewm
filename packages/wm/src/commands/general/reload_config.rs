@@ -27,6 +27,9 @@ pub fn reload_config(
   // Re-evaluate user config file and set its values in state.
   config.reload()?;
 
+  // Push stage manager config updates to a running panel.
+  state.stage.on_config_reload(&config.value.stage_manager);
+
   // Re-run window rules on all active windows.
   for window in state.windows() {
     window.set_done_window_rules(Vec::new());

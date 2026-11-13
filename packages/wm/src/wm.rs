@@ -776,6 +776,10 @@ impl WindowManager {
         toggle_pause(state);
         Ok(())
       }
+      InvokeCommand::ToggleStageManager => {
+        crate::stage_manager::toggle(state, &*config);
+        Ok(())
+      }
     }
   }
 

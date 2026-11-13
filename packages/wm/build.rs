@@ -1,6 +1,9 @@
 use tauri_winres::VersionInfo;
 
 fn main() {
+  // Compile the stage manager panel UI.
+  slint_build::compile("src/stage_manager/ui/stage.slint").unwrap();
+
   println!("cargo:rerun-if-env-changed=VERSION_NUMBER");
   let mut res = tauri_winres::WindowsResource::new();
 

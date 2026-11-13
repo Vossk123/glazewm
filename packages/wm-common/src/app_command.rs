@@ -229,6 +229,8 @@ pub enum InvokeCommand {
     maximized: Option<bool>,
   },
   ToggleMinimized,
+  /// Toggles the macOS Stage Manager-like single-window mode.
+  ToggleStageManager,
   ToggleTiling,
   ToggleTilingDirection,
   SetTilingDirection {

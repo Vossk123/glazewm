@@ -322,3 +322,50 @@ keybindings:
     bindings: ['alt+shift+8']
   - commands: ['move --workspace 9', 'focus --workspace 9']
     bindings: ['alt+shift+9']
+
+  # Toggle stage manager - macOS-like single-window mode.
+  - commands: ['toggle-stage-manager']
+    bindings: ['alt+shift+m']
+
+# Stage manager - macOS Stage Manager-like single-window mode.
+# While enabled, only one window is shown at a time: focusing another window
+# minimizes the previous one. A card panel on one side of the primary monitor
+# lists all other taskbar windows with live thumbnails; clicking a card
+# restores and focuses that window.
+stage_manager:
+  # Start stage manager automatically when GlazeWM starts.
+  enabled: false
+
+  # Which side of the primary monitor the card panel docks to.
+  # Values: 'left' | 'right'.
+  side: right
+
+  # Overall panel scale. Values: 'small' | 'medium' | 'large'.
+  size: medium
+
+  # Opacity of the card backgrounds (0.0 - 1.0).
+  opacity: 0.85
+
+  # Vertical spacing between cards in pixels.
+  spacing: 10
+
+  # Corner radius of cards in pixels.
+  corner_radius: 12
+
+  # Hide the panel while a fullscreen window has focus.
+  hide_on_fullscreen: true
+
+  # Exemptions - windows matching these are never minimized by stage
+  # manager. Each exemption can be toggled independently.
+  exempt_same_process: true
+  exempt_same_title: true
+  exempt_fullscreen: true
+
+  # Interval in ms for refreshing the hovered card's live thumbnail.
+  hover_refresh_ms: 150
+
+  # Windows matching any of these rules are never minimized. Rules use
+  # the same `window_process` / `window_class` / `window_title` matchers
+  # as `window_rules` (string = equals, { regex = ... }, { includes = ... }
+  # and their negations are supported).
+  whitelist: []

@@ -39,6 +39,7 @@ mod events;
 mod ipc_server;
 mod models;
 mod pending_sync;
+mod stage_manager;
 mod sys_tray;
 mod traits;
 mod user_config;
@@ -176,8 +177,16 @@ async fn start_wm(
     dispatcher.show_error_dialog("Non-fatal error", &err.to_string());
   }
 
+  // Auto-enable stage manager if configured to start active.
+  if config.value.stage_manager.enabled {
+    stage_manager::toggle(&mut wm.state, &config);
+  }
+
   // Create an interval for periodically cleaning up invalid windows.
   let mut cleanup_interval = tokio::time::interval(Duration::from_secs(5));
+
+  // Panel -> WM card activations (empty branch when unavailable).
+  let mut stage_inbox = wm.state.stage.take_inbox();
 
   loop {
     let res = tokio::select! {
@@ -192,6 +201,14 @@ async fn start_wm(
       Some(()) = tray.exit_rx.recv() => {
         tracing::info!("Exiting through system tray.");
         break;
+      },
+      Some(event) = stage_inbox.recv() => {
+        tracing::debug!("Received stage panel event: {event:?}");
+        match event {
+          stage_manager::PanelToWm::CardActivated { hwnd } => {
+            stage_manager::on_card_activated(hwnd, &mut wm.state, &mut config)
+          }
+        }
       },
       Some(event) = mouse_listener.next_event() => {
         tracing::debug!("Received mouse event: {:?}", event);

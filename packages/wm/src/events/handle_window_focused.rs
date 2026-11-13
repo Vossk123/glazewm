@@ -99,6 +99,9 @@ pub fn handle_window_focused(
     state.emit_event(WmEvent::FocusChanged {
       focused_container: window.to_dto()?,
     });
+
+    // Stage manager: minimize other windows in single-window mode.
+    crate::stage_manager::on_window_focused(&window, state, config);
   }
 
   Ok(())

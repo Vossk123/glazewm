@@ -67,6 +67,9 @@ pub struct WmState {
   /// Whether the OS focused window is the same as the WM focused window.
   pub is_focus_synced: bool,
 
+  /// Runtime state of the stage manager (single-window mode + card panel).
+  pub stage: crate::stage_manager::StageRuntime,
+
   /// Whether the initial state has been populated.
   has_initialized: bool,
 
@@ -94,6 +97,7 @@ impl WmState {
       ignored_windows: Vec::new(),
       is_paused: false,
       is_focus_synced: false,
+      stage: crate::stage_manager::StageRuntime::default(),
       has_initialized: false,
       event_tx,
       exit_tx,
@@ -680,6 +684,9 @@ impl WmState {
 
 impl Drop for WmState {
   fn drop(&mut self) {
+    // Stop the stage panel thread before restoring windows.
+    self.stage.shutdown();
+
     let managed_windows = self.windows();
 
     for window in &managed_windows {

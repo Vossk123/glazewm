@@ -13,6 +13,7 @@ pub struct ParsedConfig {
   pub gaps: GapsConfig,
   pub general: GeneralConfig,
   pub keybindings: Vec<KeybindingConfig>,
+  pub stage_manager: StageManagerConfig,
   pub window_behavior: WindowBehaviorConfig,
   pub window_effects: WindowEffectsConfig,
   pub window_rules: Vec<WindowRuleConfig>,
@@ -303,6 +304,94 @@ pub struct TransparencyEffectConfig {
 
   /// The opacity to apply.
   pub opacity: OpacityValue,
+}
+
+/// Configuration for the macOS Stage Manager-like single-window mode.
+///
+/// When enabled, only the focused window is kept visible on the primary
+/// monitor. A card panel of background windows is displayed on the chosen
+/// side of the screen, and switching focus minimizes the previous window.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, rename_all(serialize = "camelCase"))]
+pub struct StageManagerConfig {
+  /// Whether stage manager is automatically enabled on startup.
+  #[serde(default = "default_bool::<false>")]
+  pub enabled: bool,
+
+  /// Which side of the primary monitor the card panel is docked to.
+  pub side: StageSide,
+
+  /// Size preset of the card panel.
+  pub size: StageSize,
+
+  /// Opacity of the card backgrounds (0..=1).
+  pub opacity: f64,
+
+  /// Vertical spacing between cards in logical pixels.
+  pub spacing: u32,
+
+  /// Corner radius of cards in logical pixels.
+  pub corner_radius: f64,
+
+  /// Whether to hide the panel while a fullscreen window is focused.
+  #[serde(default = "default_bool::<true>")]
+  pub hide_on_fullscreen: bool,
+
+  /// Whether to exempt windows that share the process of the focused
+  /// window from being minimized.
+  #[serde(default = "default_bool::<true>")]
+  pub exempt_same_process: bool,
+
+  /// Whether to exempt windows that share the title of the focused
+  /// window from being minimized.
+  #[serde(default = "default_bool::<true>")]
+  pub exempt_same_title: bool,
+
+  /// Whether to exempt fullscreen windows from being minimized.
+  #[serde(default = "default_bool::<true>")]
+  pub exempt_fullscreen: bool,
+
+  /// Live-thumbnail refresh interval while hovering a card, in ms.
+  pub hover_refresh_ms: u32,
+
+  /// Windows matching any of these rules are never minimized.
+  pub whitelist: Vec<WindowMatchConfig>,
+}
+
+impl Default for StageManagerConfig {
+  fn default() -> Self {
+    Self {
+      enabled: false,
+      side: StageSide::Right,
+      size: StageSize::Medium,
+      opacity: 0.85,
+      spacing: 10,
+      corner_radius: 12.0,
+      hide_on_fullscreen: true,
+      exempt_same_process: true,
+      exempt_same_title: true,
+      exempt_fullscreen: true,
+      hover_refresh_ms: 150,
+      whitelist: Vec::new(),
+    }
+  }
+}
+
+/// Side of the primary monitor that the stage manager panel is docked to.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StageSide {
+  Left,
+  Right,
+}
+
+/// Size preset of the stage manager panel.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StageSize {
+  Small,
+  Medium,
+  Large,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
