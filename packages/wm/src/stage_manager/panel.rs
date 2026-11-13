@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 use slint::{
-  Color, ComponentHandle, Image, LogicalPosition, LogicalSize, Model,
+  ComponentHandle, Image, LogicalPosition, LogicalSize, Model,
   ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode,
   VecModel,
 };
@@ -381,7 +381,7 @@ fn refresh(
   // desktop already (coexisting siblings included), so it never needs a
   // card. The former "exclude the focused window" rule is gone - it hid
   // a needed card whenever the native foreground was a stale leftover.
-  let mut taskbar: Vec<(isize, String, String)> = Vec::new();
+  let mut taskbar: Vec<(isize, String)> = Vec::new();
   let mut minimized: Vec<isize> = Vec::new();
   for window in dispatcher.visible_windows().unwrap_or_default() {
     if !is_taskbar_window(&window) {
@@ -392,11 +392,7 @@ fn refresh(
       minimized.push(window.id().0);
     }
 
-    taskbar.push((
-      window.id().0,
-      window.title().unwrap_or_default(),
-      window.process_name().unwrap_or_default(),
-    ));
+    taskbar.push((window.id().0, window.title().unwrap_or_default()));
   }
 
   // Stable card slots: surviving windows keep their original slot and
@@ -407,8 +403,8 @@ fn refresh(
     let mut state = state.borrow_mut();
     state
       .order
-      .retain(|hwnd| taskbar.iter().any(|(seen, _, _)| seen == hwnd));
-    for (hwnd, _, _) in &taskbar {
+      .retain(|hwnd| taskbar.iter().any(|(seen, _)| seen == hwnd));
+    for (hwnd, _) in &taskbar {
       if !state.order.contains(hwnd) {
         state.order.push(*hwnd);
       }
@@ -417,13 +413,13 @@ fn refresh(
     // Drop cached captures for windows that are gone.
     state
       .thumbs
-      .retain(|hwnd, _| taskbar.iter().any(|(seen, _, _)| seen == hwnd));
+      .retain(|hwnd, _| taskbar.iter().any(|(seen, _)| seen == hwnd));
     state
       .icons
-      .retain(|hwnd, _| taskbar.iter().any(|(seen, _, _)| seen == hwnd));
+      .retain(|hwnd, _| taskbar.iter().any(|(seen, _)| seen == hwnd));
   }
 
-  let enumerated: Vec<(isize, String, String)> = {
+  let enumerated: Vec<(isize, String)> = {
     let state = state.borrow();
     state
       .order
@@ -431,14 +427,14 @@ fn refresh(
       .filter_map(|hwnd| {
         taskbar
           .iter()
-          .find(|(seen, _, _)| seen == hwnd)
+          .find(|(seen, _)| seen == hwnd)
           .cloned()
       })
-      .filter(|(hwnd, _, _)| minimized.contains(hwnd))
+      .filter(|(hwnd, _)| minimized.contains(hwnd))
       .collect()
   };
 
-  let hwnds: Vec<isize> = enumerated.iter().map(|(hwnd, _, _)| *hwnd).collect();
+  let hwnds: Vec<isize> = enumerated.iter().map(|(hwnd, _)| *hwnd).collect();
 
   let changed = {
     let state = state.borrow();
@@ -449,7 +445,7 @@ fn refresh(
   }
 
   let mut cards = Vec::with_capacity(enumerated.len());
-  for (hwnd, title, process) in &enumerated {
+  for (hwnd, title) in &enumerated {
     // Card windows are always minimized here, and `PrintWindow` on a
     // minimized window only ever produces degenerate output (a flat
     // fill or the small icon cluster Windows draws for it) - so no
@@ -473,13 +469,13 @@ fn refresh(
       }
     };
 
-    cards.push(build_card(title, process, thumb, icon));
+    cards.push(build_card(title, thumb, icon));
   }
 
   {
     let mut state = state.borrow_mut();
     state.prev_enum = hwnds;
-    state.hwnds = enumerated.iter().map(|(hwnd, _, _)| *hwnd).collect();
+    state.hwnds = enumerated.iter().map(|(hwnd, _)| *hwnd).collect();
     state.cards.clear();
     for card in cards {
       state.cards.push(card);
@@ -564,11 +560,9 @@ fn set_card_thumb(
 }
 
 /// Builds a card with a thumbnail, or a fallback of the app icon (or the
-/// title's first char, plus a process-derived accent color) over a flat
-/// accent rectangle.
+/// title's first char) over a flat dark rectangle.
 fn build_card(
   title: &str,
-  process: &str,
   thumb: Option<Image>,
   icon: Option<Image>,
 ) -> StageCard {
@@ -583,41 +577,10 @@ fn build_card(
     title: SharedString::from(title),
     thumb: thumb.clone().unwrap_or_default(),
     initial: SharedString::from(initial),
-    accent: accent_color(process),
     has_thumb: thumb.is_some(),
     icon: icon.clone().unwrap_or_default(),
     has_icon: icon.is_some(),
   }
-}
-
-/// Deterministic card accent color derived from the process name.
-fn accent_color(process: &str) -> Color {
-  let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-  for byte in process.as_bytes() {
-    hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
-  }
-
-  // HSL(hue, 0.5, 0.35) to RGB.
-  let hue = (hash % 360) as f32;
-  let lightness = 0.35f32;
-  let saturation = 0.5f32;
-  let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-  let x = chroma * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
-  let m = lightness - chroma / 2.0;
-  let (r, g, b) = match (hue / 60.0) as u32 {
-    0 => (chroma, x, 0.0),
-    1 => (x, chroma, 0.0),
-    2 => (0.0, chroma, x),
-    3 => (0.0, x, chroma),
-    4 => (x, 0.0, chroma),
-    _ => (chroma, 0.0, x),
-  };
-
-  Color::from_rgb_u8(
-    ((r + m) * 255.0) as u8,
-    ((g + m) * 255.0) as u8,
-    ((b + m) * 255.0) as u8,
-  )
 }
 
 fn image_to_slint(image: CapturedImage) -> Image {

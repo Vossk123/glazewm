@@ -7,7 +7,6 @@ export struct StageCard {
     title: string,
     thumb: image,
     initial: string,
-    accent: color,
     has-thumb: bool,
     icon: image,
     has-icon: bool,
@@ -62,14 +61,14 @@ export component StagePanel inherits Window {
             }
 
             // Fallback when no thumbnail is available: the app icon
-            // centered on the accent color, or the title's initial when
+            // centered on a flat dark fill, or the title's initial when
             // the icon capture failed too.
             if !card.has-thumb: Rectangle {
                 x: 0;
                 y: 0;
                 width: parent.width;
                 height: parent.height - 36px;
-                background: card.accent;
+                background: rgba(34, 34, 40, 1);
 
                 if card.has-icon: Image {
                     width: min(64px, parent.height - 24px);
