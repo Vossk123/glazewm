@@ -1,8 +1,9 @@
 //! Window thumbnail capture via `PrintWindow`.
 //!
-//! Captures the visible content of a window into an RGBA buffer, cropped to
-//! the DWM extended frame bounds (excluding the invisible shadow border),
-//! detected for blankness, and downscaled to keep thumbnails small.
+//! Captures the visible content of a window into an RGBA buffer, cropped
+//! to the DWM extended frame bounds (excluding the invisible shadow
+//! border), detected for blankness, and downscaled to keep thumbnails
+//! small.
 //!
 //! Called from the WM thread right before minimizing a window (while the
 //! window is still visible) and from the panel thread for hover refreshes.
@@ -15,34 +16,45 @@ pub struct CapturedImage {
   pub rgba: Vec<u8>,
 }
 
+/// The crop of a captured window bitmap, in source pixels.
+///
+/// Excludes the invisible DWM shadow border when the extended frame
+/// bounds are available.
+struct Crop {
+  x: u32,
+  y: u32,
+  width: u32,
+  height: u32,
+}
+
 /// Captures the window content, or `None` if it failed or the window
-/// rendered as blank (e.g. hardware-accelerated surfaces that `PrintWindow`
-/// cannot see, in which case the panel falls back to a placeholder card).
+/// rendered as blank (e.g. hardware-accelerated surfaces that
+/// `PrintWindow` cannot see, in which case the panel falls back to a
+/// placeholder card).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 #[cfg(target_os = "windows")]
 pub fn capture_window(hwnd: isize, max_dim: u32) -> Option<CapturedImage> {
   use tracing::trace;
-  use windows::Win32::Foundation::{HWND, RECT};
-  use windows::Win32::Graphics::Dwm::{
-    DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
+  use windows::Win32::{
+    Foundation::HWND,
+    Graphics::Gdi::{
+      CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject,
+      GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
+      BI_RGB, DIB_RGB_COLORS,
+    },
+    Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
+    UI::WindowsAndMessaging::GetWindowRect,
   };
-  use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC,
-    CreateDIBSection, DeleteDC, DeleteObject, DIB_RGB_COLORS, GetWindowDC,
-    ReleaseDC, SelectObject,
-  };
-  use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
-  use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
   let raw_hwnd = HWND(hwnd);
 
-  let mut win_rect = RECT::default();
-  let mut frame_rect = RECT::default();
+  let mut win_rect = windows::Win32::Foundation::RECT::default();
 
   // SAFETY: All Win32 calls below operate on the given window handle and
   // GDI objects created within this function. Every created GDI object is
   // deleted before returning on every code path.
   unsafe {
-    if GetWindowRect(raw_hwnd, &mut win_rect).is_err() {
+    if GetWindowRect(raw_hwnd, &raw mut win_rect).is_err() {
       return None;
     }
 
@@ -52,36 +64,7 @@ pub fn capture_window(hwnd: isize, max_dim: u32) -> Option<CapturedImage> {
       return None;
     }
 
-    // Crop the invisible shadow border via the DWM extended frame bounds.
-    let has_frame_bounds = DwmGetWindowAttribute(
-      raw_hwnd,
-      DWMWA_EXTENDED_FRAME_BOUNDS,
-      std::ptr::from_mut::<RECT>(&mut frame_rect).cast(),
-      std::mem::size_of::<RECT>() as u32,
-    )
-    .is_ok()
-      && frame_rect.right > frame_rect.left
-      && frame_rect.bottom > frame_rect.top;
-
-    let (crop_x, crop_y) = if has_frame_bounds {
-      (
-        (frame_rect.left - win_rect.left).clamp(0, win_w - 1),
-        (frame_rect.top - win_rect.top).clamp(0, win_h - 1),
-      )
-    } else {
-      (0, 0)
-    };
-
-    let crop_w = if has_frame_bounds {
-      (frame_rect.right - frame_rect.left).clamp(1, win_w - crop_x)
-    } else {
-      win_w
-    };
-    let crop_h = if has_frame_bounds {
-      (frame_rect.bottom - frame_rect.top).clamp(1, win_h - crop_y)
-    } else {
-      win_h
-    };
+    let crop = crop_bounds(raw_hwnd, &win_rect);
 
     let screen_dc = GetWindowDC(HWND::default());
     if screen_dc.is_invalid() {
@@ -95,7 +78,7 @@ pub fn capture_window(hwnd: isize, max_dim: u32) -> Option<CapturedImage> {
       return None;
     }
 
-    let mut bitmap_info = BITMAPINFO {
+    let bitmap_info = BITMAPINFO {
       bmiHeader: BITMAPINFOHEADER {
         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
         biWidth: win_w,
@@ -112,9 +95,9 @@ pub fn capture_window(hwnd: isize, max_dim: u32) -> Option<CapturedImage> {
     let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
     let bitmap = CreateDIBSection(
       screen_dc,
-      &mut bitmap_info,
+      &raw const bitmap_info,
       DIB_RGB_COLORS,
-      &mut bits,
+      &raw mut bits,
       windows::Win32::Foundation::HANDLE(0),
       0,
     );
@@ -143,10 +126,7 @@ pub fn capture_window(hwnd: isize, max_dim: u32) -> Option<CapturedImage> {
         bits.cast::<u8>(),
         win_w as u32,
         win_h as u32,
-        crop_x.max(0) as u32,
-        crop_y.max(0) as u32,
-        crop_w.max(1) as u32,
-        crop_h.max(1) as u32,
+        &crop,
         max_dim,
       )
     } else {
@@ -162,39 +142,93 @@ pub fn capture_window(hwnd: isize, max_dim: u32) -> Option<CapturedImage> {
   }
 }
 
+/// Computes the shadow-free crop rectangle for `raw_hwnd` inside
+/// `win_rect` (the window's `GetWindowRect` bounds).
+///
+/// Uses the DWM extended frame bounds to exclude the invisible shadow
+/// border; falls back to the full window rect when unavailable.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[cfg(target_os = "windows")]
+fn crop_bounds(
+  raw_hwnd: windows::Win32::Foundation::HWND,
+  win_rect: &windows::Win32::Foundation::RECT,
+) -> Crop {
+  use windows::Win32::{
+    Foundation::RECT,
+    Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
+  };
+
+  let win_w = win_rect.right - win_rect.left;
+  let win_h = win_rect.bottom - win_rect.top;
+
+  let mut frame_rect = RECT::default();
+
+  // SAFETY: `frame_rect` is a live `RECT` and the byte size passed
+  // matches it exactly.
+  let has_frame_bounds = unsafe {
+    DwmGetWindowAttribute(
+      raw_hwnd,
+      DWMWA_EXTENDED_FRAME_BOUNDS,
+      std::ptr::from_mut::<RECT>(&mut frame_rect).cast(),
+      std::mem::size_of::<RECT>() as u32,
+    )
+    .is_ok()
+  } && frame_rect.right > frame_rect.left
+    && frame_rect.bottom > frame_rect.top;
+
+  if !has_frame_bounds {
+    return Crop {
+      x: 0,
+      y: 0,
+      width: win_w as u32,
+      height: win_h as u32,
+    };
+  }
+
+  let crop_x = (frame_rect.left - win_rect.left).clamp(0, win_w - 1);
+  let crop_y = (frame_rect.top - win_rect.top).clamp(0, win_h - 1);
+
+  Crop {
+    x: crop_x.max(0) as u32,
+    y: crop_y.max(0) as u32,
+    width: (frame_rect.right - frame_rect.left)
+      .clamp(1, win_w - crop_x)
+      .max(1) as u32,
+    height: (frame_rect.bottom - frame_rect.top)
+      .clamp(1, win_h - crop_y)
+      .max(1) as u32,
+  }
+}
+
 /// Non-Windows stub so that the module compiles on all platforms.
 #[cfg(not(target_os = "windows"))]
-pub fn capture_window(_hwnd: isize, _max_dim: u32) -> Option<CapturedImage> {
+pub fn capture_window(
+  _hwnd: isize,
+  _max_dim: u32,
+) -> Option<CapturedImage> {
   None
 }
 
-/// Renders the window's application icon into a `size x size` RGBA image.
+/// Resolves the window's icon handle.
 ///
-/// Icon lookup order: `WM_GETICON` big, `WM_GETICON` small2, then the class
-/// icons. Alpha is recovered by rendering the icon twice - over black and
-/// over white - because `DrawIconEx` writes into a GDI DIB without a
-/// trustworthy alpha channel.
+/// Tries `WM_GETICON` (big, then small2) before falling back to the
+/// class icon slots.
 #[cfg(target_os = "windows")]
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-pub fn capture_window_icon(hwnd: isize, size: u32) -> Option<CapturedImage> {
-  use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WPARAM};
-  use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC,
-    CreateDIBSection, DeleteDC, DeleteObject, DIB_RGB_COLORS, GetWindowDC,
-    ReleaseDC, SelectObject,
-  };
-  use windows::Win32::UI::WindowsAndMessaging::{
-    DrawIconEx, GetClassLongPtrW, SendMessageTimeoutW, DI_NORMAL, GCLP_HICON,
-    GCLP_HICONSM, HICON, ICON_BIG, ICON_SMALL2, SEND_MESSAGE_TIMEOUT_FLAGS,
-    WM_GETICON,
+#[allow(clippy::cast_possible_wrap)]
+fn get_window_icon(
+  raw_hwnd: windows::Win32::Foundation::HWND,
+) -> Option<windows::Win32::UI::WindowsAndMessaging::HICON> {
+  use windows::Win32::{
+    Foundation::{LPARAM, WPARAM},
+    UI::WindowsAndMessaging::{
+      GetClassLongPtrW, SendMessageTimeoutW, GCLP_HICON, GCLP_HICONSM,
+      HICON, ICON_BIG, ICON_SMALL2, SEND_MESSAGE_TIMEOUT_FLAGS,
+      WM_GETICON,
+    },
   };
 
-  // Supersample so the small card icon stays crisp.
-  let render = size.saturating_mul(2).max(4);
-  let raw_hwnd = HWND(hwnd);
-
-  // SAFETY: All Win32 calls operate on `hwnd` and GDI objects created here;
-  // every created object is deleted before returning on all paths.
+  // SAFETY: `SendMessageTimeoutW` writes a single pointer-sized value
+  // into the provided out-parameter.
   unsafe {
     let icon = |wparam: usize| -> Option<HICON> {
       let mut result: usize = 0;
@@ -205,21 +239,58 @@ pub fn capture_window_icon(hwnd: isize, size: u32) -> Option<CapturedImage> {
         LPARAM(0),
         SEND_MESSAGE_TIMEOUT_FLAGS(0),
         100,
-        Some(&mut result),
+        Some(&raw mut result),
       );
-      (result != 0).then(|| HICON(result as isize))
+      (result != 0).then_some(HICON(result as isize))
     };
 
-    let hicon = icon(ICON_BIG as usize)
+    icon(ICON_BIG as usize)
       .or_else(|| icon(ICON_SMALL2 as usize))
       .or_else(|| {
         let big = GetClassLongPtrW(raw_hwnd, GCLP_HICON);
-        (big != 0).then(|| HICON(big as isize))
+        (big != 0).then_some(HICON(big as isize))
       })
       .or_else(|| {
         let small = GetClassLongPtrW(raw_hwnd, GCLP_HICONSM);
-        (small != 0).then(|| HICON(small as isize))
-      })?;
+        (small != 0).then_some(HICON(small as isize))
+      })
+  }
+}
+
+/// Renders the window's application icon into a `size x size` RGBA
+/// image.
+///
+/// Alpha is recovered by rendering the icon twice - over black and over
+/// white - because `DrawIconEx` writes into a GDI DIB without a
+/// trustworthy alpha channel.
+#[cfg(target_os = "windows")]
+#[allow(
+  clippy::cast_possible_truncation,
+  clippy::cast_sign_loss,
+  clippy::cast_possible_wrap
+)]
+pub fn capture_window_icon(
+  hwnd: isize,
+  size: u32,
+) -> Option<CapturedImage> {
+  use windows::Win32::{
+    Foundation::{HANDLE, HWND},
+    Graphics::Gdi::{
+      CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject,
+      GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
+      BI_RGB, DIB_RGB_COLORS,
+    },
+    UI::WindowsAndMessaging::{DrawIconEx, DI_NORMAL},
+  };
+
+  // Supersample so the small card icon stays crisp.
+  let render = size.saturating_mul(2).max(4);
+  let raw_hwnd = HWND(hwnd);
+
+  // SAFETY: All Win32 calls operate on `hwnd` and GDI objects created
+  // here; every created object is deleted before returning on all paths.
+  unsafe {
+    let hicon = get_window_icon(raw_hwnd)?;
 
     let screen_dc = GetWindowDC(HWND::default());
     if screen_dc.is_invalid() {
@@ -232,7 +303,7 @@ pub fn capture_window_icon(hwnd: isize, size: u32) -> Option<CapturedImage> {
       return None;
     }
 
-    let mut bitmap_info = BITMAPINFO {
+    let bitmap_info = BITMAPINFO {
       bmiHeader: BITMAPINFOHEADER {
         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
         biWidth: render as i32,
@@ -248,9 +319,9 @@ pub fn capture_window_icon(hwnd: isize, size: u32) -> Option<CapturedImage> {
     let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
     let bitmap = match CreateDIBSection(
       screen_dc,
-      &mut bitmap_info,
+      &raw const bitmap_info,
       DIB_RGB_COLORS,
-      &mut bits,
+      &raw mut bits,
       HANDLE(0),
       0,
     ) {
@@ -264,7 +335,8 @@ pub fn capture_window_icon(hwnd: isize, size: u32) -> Option<CapturedImage> {
 
     let old_object = SelectObject(mem_dc, bitmap);
     let pixel_count = (render * render) as usize;
-    let buffer = std::slice::from_raw_parts_mut(bits.cast::<u8>(), pixel_count * 4);
+    let buffer =
+      std::slice::from_raw_parts_mut(bits.cast::<u8>(), pixel_count * 4);
 
     // Pass 1: over black.
     buffer.fill(0);
@@ -314,7 +386,10 @@ pub fn capture_window_icon(hwnd: isize, size: u32) -> Option<CapturedImage> {
 
 /// Non-Windows stub so that the module compiles on all platforms.
 #[cfg(not(target_os = "windows"))]
-pub fn capture_window_icon(_hwnd: isize, _size: u32) -> Option<CapturedImage> {
+pub fn capture_window_icon(
+  _hwnd: isize,
+  _size: u32,
+) -> Option<CapturedImage> {
   None
 }
 
@@ -355,9 +430,10 @@ fn recover_icon_alpha(
 
           // over_black = a*F ; over_white = a*F + (1-a)*255
           // => a = 1 - (white - black) / 255 per channel.
-          let a = 1.0 - ((r2 - r1).max(0.0) / 255.0)
-            .max((g2 - g1).max(0.0) / 255.0)
-            .max((b2 - b1).max(0.0) / 255.0);
+          let a = 1.0
+            - ((r2 - r1).max(0.0) / 255.0)
+              .max((g2 - g1).max(0.0) / 255.0)
+              .max((b2 - b1).max(0.0) / 255.0);
 
           let a = a.clamp(0.0, 1.0);
           let safe_a = if a > 0.01 { a } else { 1.0 };
@@ -401,36 +477,35 @@ fn recover_icon_alpha(
   }
 }
 
-/// Converts a top-down BGRA buffer into a cropped, blank-checked, box-filter
-/// downscaled RGBA image.
+/// Converts a top-down BGRA buffer into a cropped, blank-checked,
+/// box-filter downscaled RGBA image.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn capture_from_bits(
   bits: *const u8,
   width: u32,
   height: u32,
-  crop_x: u32,
-  crop_y: u32,
-  crop_w: u32,
-  crop_h: u32,
+  crop: &Crop,
   max_dim: u32,
 ) -> Option<CapturedImage> {
-  if crop_x + crop_w > width || crop_y + crop_h > height {
+  if crop.x + crop.width > width || crop.y + crop.height > height {
     return None;
   }
 
   // SAFETY: `bits` points to a valid top-down 32bpp buffer of at least
-  // `width * height * 4` bytes, created by `CreateDIBSection` and alive for
-  // the duration of this call (enforced by the caller's cleanup order).
+  // `width * height * 4` bytes, created by `CreateDIBSection` and alive
+  // for the duration of this call (enforced by the caller's cleanup
+  // order).
   let src = unsafe {
     std::slice::from_raw_parts(bits, (width * height * 4) as usize)
   };
 
   // Downscale factor for the box filter.
-  let scale =
-    ((crop_w.max(crop_h) as f64) / f64::from(max_dim.max(1))).ceil().max(1.0)
-      as u32;
-  let out_w = (crop_w / scale).max(1);
-  let out_h = (crop_h / scale).max(1);
+  let scale = (f64::from(crop.width.max(crop.height))
+    / f64::from(max_dim.max(1)))
+  .ceil()
+  .max(1.0) as u32;
+  let out_w = (crop.width / scale).max(1);
+  let out_h = (crop.height / scale).max(1);
 
   let mut rgba = vec![0u8; (out_w * out_h * 4) as usize];
   let mut has_content = false;
@@ -440,10 +515,10 @@ fn capture_from_bits(
       let mut sums = [0u64; 4];
       let mut count = 0u64;
 
-      let base_x = crop_x + out_x * scale;
-      let base_y = crop_y + out_y * scale;
-      let end_x = (base_x + scale).min(crop_x + crop_w);
-      let end_y = (base_y + scale).min(crop_y + crop_h);
+      let base_x = crop.x + out_x * scale;
+      let base_y = crop.y + out_y * scale;
+      let end_x = (base_x + scale).min(crop.x + crop.width);
+      let end_y = (base_y + scale).min(crop.y + crop.height);
 
       for y in base_y..end_y {
         let row = (y * width) as usize;
@@ -462,19 +537,19 @@ fn capture_from_bits(
       }
 
       // Source is BGRA (premultiplied by DWM), output is RGBA.
-      let b = (sums[0] / count) as u8;
-      let g = (sums[1] / count) as u8;
-      let r = (sums[2] / count) as u8;
-      let a = (sums[3] / count) as u8;
+      let blue = (sums[0] / count) as u8;
+      let green = (sums[1] / count) as u8;
+      let red = (sums[2] / count) as u8;
+      let alpha = (sums[3] / count) as u8;
 
-      if r + g + b > 24 || a > 16 {
+      if red + green + blue > 24 || alpha > 16 {
         has_content = true;
       }
 
       let o = ((out_y * out_w + out_x) * 4) as usize;
-      rgba[o] = r;
-      rgba[o + 1] = g;
-      rgba[o + 2] = b;
+      rgba[o] = red;
+      rgba[o + 1] = green;
+      rgba[o + 2] = blue;
       rgba[o + 3] = 255;
     }
   }
@@ -486,7 +561,7 @@ fn capture_from_bits(
   // its fallback instead.
   let mut min_rgb = [255u8; 3];
   let mut max_rgb = [0u8; 3];
-  for pixel in rgba.chunks_exact(4) {
+  for pixel in rgba.as_chunks::<4>().0 {
     for channel in 0..3 {
       min_rgb[channel] = min_rgb[channel].min(pixel[channel]);
       max_rgb[channel] = max_rgb[channel].max(pixel[channel]);
@@ -514,8 +589,18 @@ fn capture_from_bits(
 mod tests {
   use super::capture_from_bits;
 
-  fn capture(bgra: &[u8], width: u32, height: u32) -> Option<super::CapturedImage> {
-    capture_from_bits(bgra.as_ptr(), width, height, 0, 0, width, height, 64)
+  fn capture(
+    bgra: &[u8],
+    width: u32,
+    height: u32,
+  ) -> Option<super::CapturedImage> {
+    let crop = super::Crop {
+      x: 0,
+      y: 0,
+      width,
+      height,
+    };
+    capture_from_bits(bgra.as_ptr(), width, height, &crop, 64)
   }
 
   #[test]
@@ -523,7 +608,7 @@ mod tests {
     let width = 8;
     let height = 8;
     let mut bgra = vec![0u8; (width * height * 4) as usize];
-    for pixel in bgra.chunks_exact_mut(4) {
+    for pixel in bgra.as_chunks_mut::<4>().0 {
       pixel.copy_from_slice(&[160, 160, 160, 255]);
     }
     assert!(capture(&bgra, width, height).is_none());
@@ -542,7 +627,7 @@ mod tests {
     let width = 8;
     let height = 8;
     let mut bgra = vec![0u8; (width * height * 4) as usize];
-    for (i, pixel) in bgra.chunks_exact_mut(4).enumerate() {
+    for (i, pixel) in bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
       if i % 2 == 0 {
         pixel.copy_from_slice(&[200, 40, 60, 255]);
       }

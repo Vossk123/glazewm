@@ -50,16 +50,20 @@ When stage mode is off, GlazeWM behaves exactly like upstream.
 
 ## Quick start
 
-1. **Get the binary.** Build from source (see [Build](#build-from-source)) or use
-   a prebuilt `glazewm.exe` from this fork's releases.
-2. **Install.** Close GlazeWM (`glazewm command wm-exit`), back up the original,
-   then replace the main executable (the CLI and watcher from the official
-   install keep working — the IPC protocol is unchanged):
+1. **Get the binaries.** Build from source (see [Build](#build-from-source)) —
+   this fork does not publish prebuilt binaries (signed installers need the
+   upstream authors' certificate).
+2. **Install.** Close GlazeWM (`glazewm command wm-exit`), back up the originals,
+   then replace the main executable *and* the CLI (the fork's CLI adds the
+   stage-manager subcommands; the watcher from the official install keeps
+   working — the IPC protocol is unchanged):
 
    ```powershell
    Stop-Process -Name glazewm -Force
    Copy-Item 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe.bak'
+   Copy-Item 'C:\Program Files\glzr.io\GlazeWM\cli\glazewm.exe' 'C:\Program Files\glzr.io\GlazeWM\cli\glazewm.exe.bak'
    Copy-Item .\glazewm.exe 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' -Force
+   Copy-Item .\glazewm-cli.exe 'C:\Program Files\glzr.io\GlazeWM\cli\glazewm.exe' -Force
    Start-Process 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe'
    ```
 
@@ -152,7 +156,8 @@ Prerequisites: the Rust nightly toolchain (pinned by the repo's `rust-toolchain.
 git clone https://github.com/Vossk123/glazewm.git
 cd glazewm
 git checkout stage-manager
-cargo build --release -p wm        # output: target\release\glazewm.exe
+cargo build --release -p wm -p wm-cli
+# outputs: target\release\glazewm.exe and target\release\glazewm-cli.exe
 ```
 
 Set `VERSION_NUMBER` at build time to stamp the version
@@ -208,14 +213,18 @@ v3.10.1 的 fork，为其新增了一个类 macOS **台前调度（Stage Manager
 
 ### 快速开始
 
-1. 获取二进制：自行构建（见下方），或使用 release 页面提供的 `glazewm.exe`。
-2. 安装：先 `glazewm command wm-exit` 退出，备份原程序，再覆盖主程序
-   （官方安装的 CLI 与 watcher 可继续保留，IPC 协议未改动）：
+1. 获取二进制：自行构建（见下方）。本 fork 不提供预编译包（签名的安装包需要
+   上游作者的证书）。
+2. 安装：先 `glazewm command wm-exit` 退出，备份原程序，再覆盖主程序**和** CLI
+   （fork 的 CLI 增加了台前调度子命令；官方安装的 watcher 可继续保留，IPC
+   协议未改动）：
 
    ```powershell
    Stop-Process -Name glazewm -Force
    Copy-Item 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe.bak'
+   Copy-Item 'C:\Program Files\glzr.io\GlazeWM\cli\glazewm.exe' 'C:\Program Files\glzr.io\GlazeWM\cli\glazewm.exe.bak'
    Copy-Item .\glazewm.exe 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe' -Force
+   Copy-Item .\glazewm-cli.exe 'C:\Program Files\glzr.io\GlazeWM\cli\glazewm.exe' -Force
    Start-Process 'C:\Program Files\glzr.io\GlazeWM\glazewm.exe'
    ```
 
@@ -297,7 +306,7 @@ stage_manager:
 git clone https://github.com/Vossk123/glazewm.git
 cd glazewm
 git checkout stage-manager
-cargo build --release -p wm        # 产物: target\release\glazewm.exe
+cargo build --release -p wm -p wm-cli   # 产物: target\release\glazewm.exe 与 glazewm-cli.exe
 ```
 
 构建时设置 `VERSION_NUMBER` 可写入版本号

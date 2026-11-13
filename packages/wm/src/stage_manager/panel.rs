@@ -1,48 +1,53 @@
 //! Stage manager card panel — runs the Slint UI on a dedicated thread.
 //!
 //! The panel is a frameless, transparent, always-on-top window docked to
-//! the left or right side of the primary monitor. It lists all taskbar-style
-//! windows except the focused one, with a thumbnail per card.
+//! the left or right side of the primary monitor. It lists all
+//! taskbar-style windows except the focused one, with a thumbnail per
+//! card.
 //!
-//! Communication with the WM thread is via an mpsc channel (`PanelMsg`) plus
-//! an atomic quit flag, polled from a `slint::Timer` inside the panel's
-//! event loop. Card clicks act on Win32 directly (restore + focus); the
-//! resulting focus event drives the WM-side minimization of the previous
-//! window automatically.
+//! Communication with the WM thread is via an mpsc channel (`PanelMsg`)
+//! plus an atomic quit flag, polled from a `slint::Timer` inside the
+//! panel's event loop. Card clicks act on Win32 directly (restore +
+//! focus); the resulting focus event drives the WM-side minimization of
+//! the previous window automatically.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Receiver;
-use std::sync::Arc;
-use std::time::Duration;
-
-use tokio::sync::mpsc::UnboundedSender;
-
-use slint::{
-  ComponentHandle, Image, LogicalPosition, LogicalSize, Model,
-  ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode,
-  VecModel,
+use std::{
+  cell::RefCell,
+  collections::HashMap,
+  rc::Rc,
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::Receiver,
+    Arc,
+  },
+  time::Duration,
 };
+
+use anyhow::Context;
+use slint::{
+  ComponentHandle, Image, LogicalPosition, LogicalSize, Model, ModelRc,
+  Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel,
+};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, warn};
+use windows::{
+  core::{HSTRING, PCWSTR},
+  Win32::{
+    Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+    Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED},
+    System::LibraryLoader::GetModuleHandleW,
+    UI::WindowsAndMessaging::{
+      CreateWindowExW, DefWindowProcW, FindWindowW, GetForegroundWindow,
+      GetWindowLongW, GetWindowThreadProcessId, RegisterClassExW,
+      SetForegroundWindow, SetWindowLongPtrW, SetWindowLongW,
+      SetWindowPos, GWL_EXSTYLE, GWL_HWNDPARENT, HWND_TOPMOST,
+      SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WNDCLASSEXW,
+      WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    },
+  },
+};
 use wm_common::{StageManagerConfig, StageSide, StageSize};
 use wm_platform::{Dispatcher, NativeWindow, NativeWindowWindowsExt};
-use anyhow::Context;
-use windows::core::{HSTRING, PCWSTR};
-use windows::Win32::Foundation::{
-  HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
-};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::{
-  CreateWindowExW, DefWindowProcW, FindWindowW, GetForegroundWindow,
-  GetWindowLongW, GetWindowThreadProcessId, RegisterClassExW,
-  SetForegroundWindow, SetWindowLongPtrW, SetWindowLongW, SetWindowPos,
-  GWL_EXSTYLE, GWL_HWNDPARENT, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
-  SWP_NOACTIVATE, WNDCLASSEXW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-  WS_EX_TOOLWINDOW, WS_POPUP,
-};
 
 use super::{
   capture::{self, CapturedImage},
@@ -68,6 +73,9 @@ const ENUM_TICKS: u32 = 3;
 /// so it is captured larger than the title-bar icon's render size.
 const ICON_SIZE: u32 = 64;
 
+/// Must match the card title-bar height in `ui/stage.slint`.
+const HEADER: f32 = 36.0;
+
 /// Logical card width for a size preset (px).
 fn card_width_for(size: StageSize) -> f32 {
   match size {
@@ -87,7 +95,8 @@ struct PanelState {
   thumbs: HashMap<isize, Image>,
   /// App icons by HWND (kept across refreshes and window swaps).
   icons: HashMap<isize, Image>,
-  /// Stable card slots: HWNDs in first-seen order, surviving focus changes.
+  /// Stable card slots: HWNDs in first-seen order, surviving focus
+  /// changes.
   order: Vec<isize>,
   prev_enum: Vec<isize>,
   enum_tick: u32,
@@ -107,7 +116,7 @@ pub fn panel_main(
   config: StageManagerConfig,
   rx: Receiver<PanelMsg>,
   ack_rx: Receiver<()>,
-  quit: Arc<AtomicBool>,
+  quit: &Arc<AtomicBool>,
   dispatcher: Dispatcher,
   wm_tx: UnboundedSender<PanelToWm>,
 ) {
@@ -122,14 +131,15 @@ fn run_panel(
   config: StageManagerConfig,
   rx: Receiver<PanelMsg>,
   ack_rx: Receiver<()>,
-  quit: Arc<AtomicBool>,
+  quit: &Arc<AtomicBool>,
   dispatcher: Dispatcher,
   wm_tx: UnboundedSender<PanelToWm>,
 ) -> Result<(), slint::PlatformError> {
   let ui = StagePanel::new()?;
 
   let cards_model = Rc::new(VecModel::<StageCard>::default());
-  ui.global::<Stage>().set_cards(ModelRc::from(cards_model.clone()));
+  ui.global::<Stage>()
+    .set_cards(ModelRc::from(cards_model.clone()));
 
   let state = Rc::new(RefCell::new(PanelState {
     cfg: config,
@@ -195,7 +205,7 @@ fn run_panel(
   timer.start(TimerMode::Repeated, TICK, {
     let ui = ui.as_weak();
     let state = state.clone();
-    let quit = quit.clone();
+    let quit = Arc::clone(quit);
     move || {
       let Some(ui) = ui.upgrade() else {
         let _ = slint::quit_event_loop();
@@ -211,7 +221,7 @@ fn run_panel(
         match msg {
           PanelMsg::Refresh => refresh(&ui, &state, &dispatcher, true),
           PanelMsg::Snapshot { hwnd, image } => {
-            apply_snapshot(&state, hwnd, image);
+            apply_snapshot(&state, hwnd, &image);
           }
           PanelMsg::Reload(cfg) => {
             state.borrow_mut().cfg = cfg.clone();
@@ -221,7 +231,9 @@ fn run_panel(
           PanelMsg::SetVisible(visible) => {
             let changed = {
               let mut st = state.borrow_mut();
-              if visible != st.visible {
+              if visible == st.visible {
+                false
+              } else {
                 st.visible = visible;
                 if visible {
                   // Force a geometry recalculation to pull the parked
@@ -229,8 +241,6 @@ fn run_panel(
                   st.last_geom = None;
                 }
                 true
-              } else {
-                false
               }
             };
 
@@ -249,9 +259,8 @@ fn run_panel(
               // off-screen instead of hiding it so the panel
               // thread and its window survive a disable/enable
               // cycle for instant re-show.
-              ui.window().set_position(slint::LogicalPosition::new(
-                PARK_X, PARK_Y,
-              ));
+              ui.window()
+                .set_position(slint::LogicalPosition::new(PARK_X, PARK_Y));
             }
           }
           PanelMsg::Shutdown => {
@@ -287,6 +296,7 @@ fn run_panel(
 }
 
 /// Whether the given native window should appear as a card.
+#[allow(clippy::cast_possible_truncation)]
 fn is_taskbar_window(window: &NativeWindow) -> bool {
   if !window.is_valid() {
     return false;
@@ -295,12 +305,13 @@ fn is_taskbar_window(window: &NativeWindow) -> bool {
   let own_pid = std::process::id();
   let mut pid = 0u32;
   // SAFETY: Win32 call with a valid HWND and pointer to a local `u32`.
-  unsafe { GetWindowThreadProcessId(window.hwnd(), Some(&mut pid)) };
+  unsafe { GetWindowThreadProcessId(window.hwnd(), Some(&raw mut pid)) };
   if pid == own_pid {
     return false;
   }
 
-  if window.has_owner_window() || window.has_window_style_ex(WS_EX_TOOLWINDOW)
+  if window.has_owner_window()
+    || window.has_window_style_ex(WS_EX_TOOLWINDOW)
   {
     return false;
   }
@@ -325,10 +336,7 @@ fn is_taskbar_window(window: &NativeWindow) -> bool {
     return false;
   }
 
-  window
-    .title()
-    .map(|title| !title.trim().is_empty())
-    .unwrap_or(false)
+  window.title().is_ok_and(|title| !title.trim().is_empty())
 }
 
 /// Re-enumerates taskbar-style windows and rebuilds the model when the set
@@ -387,16 +395,14 @@ fn refresh(
       .order
       .iter()
       .filter_map(|hwnd| {
-        taskbar
-          .iter()
-          .find(|(seen, _)| seen == hwnd)
-          .cloned()
+        taskbar.iter().find(|(seen, _)| seen == hwnd).cloned()
       })
       .filter(|(hwnd, _)| minimized.contains(hwnd))
       .collect()
   };
 
-  let hwnds: Vec<isize> = enumerated.iter().map(|(hwnd, _)| *hwnd).collect();
+  let hwnds: Vec<isize> =
+    enumerated.iter().map(|(hwnd, _)| *hwnd).collect();
 
   let changed = {
     let state = state.borrow();
@@ -418,20 +424,19 @@ fn refresh(
     let thumb = state.borrow().thumbs.get(hwnd).cloned();
 
     let cached_icon = state.borrow().icons.get(hwnd).cloned();
-    let icon = match cached_icon {
-      Some(image) => Some(image),
-      None => {
-        let captured = capture::capture_window_icon(*hwnd, ICON_SIZE)
-          .filter(|image| image.width > 0);
-        captured.map(|image| {
-          let image = image_to_slint(image);
-          state.borrow_mut().icons.insert(*hwnd, image.clone());
-          image
-        })
-      }
+    let icon = if let Some(image) = cached_icon {
+      Some(image)
+    } else {
+      let captured = capture::capture_window_icon(*hwnd, ICON_SIZE)
+        .filter(|image| image.width > 0);
+      captured.map(|image| {
+        let image = image_to_slint(&image);
+        state.borrow_mut().icons.insert(*hwnd, image.clone());
+        image
+      })
     };
 
-    cards.push(build_card(title, thumb, icon));
+    cards.push(build_card(title, thumb.as_ref(), icon.as_ref()));
   }
 
   {
@@ -454,7 +459,11 @@ fn refresh(
 
 /// Applies a snapshot pushed by the WM engine (taken right before a window
 /// gets minimized) to the matching card, if present.
-fn apply_snapshot(state: &Rc<RefCell<PanelState>>, hwnd: isize, image: CapturedImage) {
+fn apply_snapshot(
+  state: &Rc<RefCell<PanelState>>,
+  hwnd: isize,
+  image: &CapturedImage,
+) {
   let image = image_to_slint(image);
   state.borrow_mut().thumbs.insert(hwnd, image.clone());
 
@@ -472,7 +481,8 @@ fn set_card_thumb(
   image: Image,
 ) {
   let state = state.borrow();
-  let Some(pos) = state.hwnds.iter().position(|&candidate| candidate == hwnd)
+  let Some(pos) =
+    state.hwnds.iter().position(|&candidate| candidate == hwnd)
   else {
     return;
   };
@@ -489,27 +499,26 @@ fn set_card_thumb(
 /// title's first char) over a flat dark rectangle.
 fn build_card(
   title: &str,
-  thumb: Option<Image>,
-  icon: Option<Image>,
+  thumb: Option<&Image>,
+  icon: Option<&Image>,
 ) -> StageCard {
   let initial = title
     .trim()
     .chars()
     .next()
-    .map(|c| c.to_uppercase().collect::<String>())
-    .unwrap_or_default();
+    .map_or_default(|c| c.to_uppercase().collect::<String>());
 
   StageCard {
     title: SharedString::from(title),
-    thumb: thumb.clone().unwrap_or_default(),
+    thumb: thumb.cloned().unwrap_or_default(),
     initial: SharedString::from(initial),
     has_thumb: thumb.is_some(),
-    icon: icon.clone().unwrap_or_default(),
+    icon: icon.cloned().unwrap_or_default(),
     has_icon: icon.is_some(),
   }
 }
 
-fn image_to_slint(image: CapturedImage) -> Image {
+fn image_to_slint(image: &CapturedImage) -> Image {
   let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
     &image.rgba,
     image.width,
@@ -519,6 +528,7 @@ fn image_to_slint(image: CapturedImage) -> Image {
 }
 
 /// Pushes visual properties that don't require geometry recalculation.
+#[allow(clippy::cast_possible_truncation)]
 fn apply_visuals(ui: &StagePanel, cfg: &StageManagerConfig) {
   let global = ui.global::<Stage>();
   global.set_card_opacity(cfg.opacity as f32);
@@ -526,6 +536,7 @@ fn apply_visuals(ui: &StagePanel, cfg: &StageManagerConfig) {
 }
 
 /// Computes and applies the panel size/position from the primary display.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 fn update_geometry(
   ui: &StagePanel,
   state: &Rc<RefCell<PanelState>>,
@@ -538,14 +549,12 @@ fn update_geometry(
     return;
   };
 
-  let scale = ui.window().scale_factor() as f32;
+  let scale = ui.window().scale_factor();
   let screen_x = bounds.x() as f32 / scale;
   let screen_y = bounds.y() as f32 / scale;
   let screen_w = bounds.width() as f32 / scale;
   let screen_h = bounds.height() as f32 / scale;
 
-  // Must match the card title-bar height in `ui/stage.slint`.
-  const HEADER: f32 = 36.0;
   let pad = 12.0f32;
   let avail_h = screen_h - 24.0;
 
@@ -568,9 +577,7 @@ fn update_geometry(
     let max_col = avail_h - 2.0 * pad;
     if wanted_col > max_col {
       let card_h = (max_col - (count - 1.0) * spacing) / count;
-      ((card_h - HEADER) * 16.0 / 9.0)
-        .max(96.0)
-        .min(base_width)
+      ((card_h - HEADER) * 16.0 / 9.0).max(96.0).min(base_width)
     } else {
       base_width
     }
@@ -627,6 +634,7 @@ fn update_geometry(
 /// `WS_EX_APPWINDOW`, which the windowing backend sets at creation time,
 /// is cleared because it forces a taskbar button even for owned tool
 /// windows.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 fn style_panel_window(state: &mut PanelState) {
   if state.styled {
     return;
@@ -645,7 +653,9 @@ fn style_panel_window(state: &mut PanelState) {
     if state.owner_hwnd == 0 {
       match create_owner_window() {
         Ok(owner) => state.owner_hwnd = owner,
-        Err(err) => warn!("Stage panel owner window creation failed: {err}"),
+        Err(err) => {
+          warn!("Stage panel owner window creation failed: {err}");
+        }
       }
     }
 
@@ -701,28 +711,31 @@ unsafe extern "system" fn owner_wnd_proc(
 ///
 /// The window is a 1x1 `WS_POPUP` parked far off-screen and never shown;
 /// it only exists to own the panel window for the Alt+Tab root-owner rule.
+#[allow(clippy::cast_possible_truncation)]
 fn create_owner_window() -> anyhow::Result<isize> {
   const CLASS_NAME: &str = "GlazeWMStageOwner";
 
   // SAFETY: Win32 class registration and window creation with a static
   // class name, `DefWindowProcW` as the procedure, and no parent window.
   let owner = unsafe {
-    let hmodule =
-      GetModuleHandleW(PCWSTR::null()).context("GetModuleHandleW failed")?;
+    let hmodule = GetModuleHandleW(PCWSTR::null())
+      .context("GetModuleHandleW failed")?;
 
     let hinstance: HINSTANCE = hmodule.into();
     let class_name = HSTRING::from(CLASS_NAME);
-    let mut class = WNDCLASSEXW::default();
-    class.cbSize =
-      u32::try_from(std::mem::size_of::<WNDCLASSEXW>()).unwrap_or_default();
-    class.lpfnWndProc = Some(owner_wnd_proc);
-    class.hInstance = hinstance;
-    class.lpszClassName = PCWSTR(class_name.as_ptr());
+    let class = WNDCLASSEXW {
+      cbSize: u32::try_from(std::mem::size_of::<WNDCLASSEXW>())
+        .unwrap_or_default(),
+      lpfnWndProc: Some(owner_wnd_proc),
+      hInstance: hinstance,
+      lpszClassName: PCWSTR(class_name.as_ptr()),
+      ..WNDCLASSEXW::default()
+    };
 
     // A non-zero return means the class got registered; zero means it
     // either failed or was already registered by a previous cycle, in
     // which case `CreateWindowExW` below still resolves the class.
-    let _ = RegisterClassExW(&class);
+    let _ = RegisterClassExW(&raw const class);
 
     CreateWindowExW(
       WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,

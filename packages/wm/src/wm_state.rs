@@ -67,7 +67,8 @@ pub struct WmState {
   /// Whether the OS focused window is the same as the WM focused window.
   pub is_focus_synced: bool,
 
-  /// Runtime state of the stage manager (single-window mode + card panel).
+  /// Runtime state of the stage manager (single-window mode + card
+  /// panel).
   pub stage: crate::stage_manager::StageRuntime,
 
   /// Whether the initial state has been populated.

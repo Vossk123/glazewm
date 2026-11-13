@@ -131,7 +131,7 @@ fn check_is_manageable(
     unsafe {
       windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
         native_window.hwnd(),
-        Some(&mut window_pid),
+        Some(&raw mut window_pid),
       );
     }
     if window_pid == std::process::id() {

@@ -35,9 +35,7 @@ pub fn handle_window_minimize_ended(
       // Stage manager: complete a sweep deferred by a focus which raced
       // this window's restore.
       crate::stage_manager::on_window_unminimized(
-        &restored,
-        state,
-        config,
+        &restored, state, config,
       );
     }
   }

@@ -311,6 +311,7 @@ pub struct TransparencyEffectConfig {
 /// When enabled, only the focused window is kept visible on the primary
 /// monitor. A card panel of background windows is displayed on the chosen
 /// side of the screen, and switching focus minimizes the previous window.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
 pub struct StageManagerConfig {

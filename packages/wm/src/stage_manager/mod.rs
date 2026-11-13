@@ -1,23 +1,28 @@
 //! Stage manager - macOS-like single-window mode with a side card panel.
 //!
-//! While enabled, focusing a window minimizes all other non-exempt windows,
-//! so the desktop only ever shows one window. A panel (see `panel`) lists
-//! the background windows with thumbnails and allows switching back via
-//! card clicks.
+//! While enabled, focusing a window minimizes all other non-exempt
+//! windows, so the desktop only ever shows one window. A panel (see
+//! `panel`) lists the background windows with thumbnails and allows
+//! switching back via card clicks.
 //!
 //! Design doc: `docs/STAGE_MANAGER_DESIGN.md`. Upstream touch points are
 //! intentionally minimal: behavior is driven from `on_window_focused()`,
 //! `toggle()`, and the `StageRuntime` stored on `WmState`.
 //!
 //! # Platform-specific
-//! - Windows: fully supported (panel thread, thumbnails via `PrintWindow`).
+//! - Windows: fully supported (panel thread, thumbnails via
+//!   `PrintWindow`).
 //! - macOS: all entry points are no-ops; enabling logs a warning.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+  sync::{
+    atomic::{AtomicBool, AtomicI64, AtomicIsize, Ordering},
+    mpsc::{self, Sender},
+    Arc,
+  },
+  thread::JoinHandle,
+  time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, warn};
@@ -27,19 +32,18 @@ use wm_common::{
 };
 use wm_platform::Dispatcher;
 
-use crate::commands::container::set_focused_descendant;
-use crate::commands::general::platform_sync;
-use crate::commands::window::run_window_rules;
-use crate::commands::window::update_window_state;
-use crate::commands::workspace::focus_workspace;
-use crate::models::NativeWindowProperties;
-use crate::models::WindowContainer;
-use crate::models::WorkspaceTarget;
-use crate::traits::{
-  CommonGetters, PositionGetters, WindowGetters,
+use crate::{
+  commands::{
+    container::set_focused_descendant,
+    general::platform_sync,
+    window::{run_window_rules, update_window_state},
+    workspace::focus_workspace,
+  },
+  models::{NativeWindowProperties, WindowContainer, WorkspaceTarget},
+  traits::{CommonGetters, PositionGetters, WindowGetters},
+  user_config::UserConfig,
+  wm_state::WmState,
 };
-use crate::user_config::UserConfig;
-use crate::wm_state::WmState;
 
 pub mod capture;
 
@@ -57,7 +61,10 @@ pub enum PanelMsg {
   /// Re-enumerate windows and rebuild the card model.
   Refresh,
   /// Fresh thumbnail for a window (captured while still visible).
-  Snapshot { hwnd: isize, image: capture::CapturedImage },
+  Snapshot {
+    hwnd: isize,
+    image: capture::CapturedImage,
+  },
   /// Apply a new configuration (after a config reload).
   Reload(StageManagerConfig),
   /// Show/hide the panel window (e.g. while a fullscreen app has focus).
@@ -97,14 +104,14 @@ pub struct StageRuntime {
   /// Released to the panel after it has processed the last card click.
   ack_tx: Option<Sender<()>>,
   /// Target HWND of the last sweep (for duplicate suppression).
-  last_sweep_hwnd: AtomicI64,
+  last_sweep_hwnd: AtomicIsize,
   /// Unix-ms timestamp of the last sweep.
   last_sweep_ms: AtomicI64,
   /// Unix-ms timestamp of the last deferred-sweep notice (log throttle).
   last_skip_ms: AtomicI64,
-  /// Target of the last sweep, armed to re-assert its foreground once if a
-  /// just-minimized window steals it back (0 = never armed).
-  sweep_target: AtomicI64,
+  /// Target of the last sweep, armed to re-assert its foreground once if
+  /// a just-minimized window steals it back (0 = never armed).
+  sweep_target: AtomicIsize,
   /// One-shot permission for the foreground reclaim re-assertion.
   reclaim_armed: AtomicBool,
 }
@@ -121,10 +128,10 @@ impl Default for StageRuntime {
       wm_tx: Some(wm_tx),
       wm_inbox: Some(wm_inbox),
       ack_tx: None,
-      last_sweep_hwnd: AtomicI64::new(0),
+      last_sweep_hwnd: AtomicIsize::new(0),
       last_sweep_ms: AtomicI64::new(0),
       last_skip_ms: AtomicI64::new(0),
-      sweep_target: AtomicI64::new(0),
+      sweep_target: AtomicIsize::new(0),
       reclaim_armed: AtomicBool::new(false),
     }
   }
@@ -172,17 +179,18 @@ impl StageRuntime {
         let spawned = std::thread::Builder::new()
           .name("stage-panel".to_string())
           .spawn(move || {
-            let result =
-              std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let result = std::panic::catch_unwind(
+              std::panic::AssertUnwindSafe(|| {
                 panel::panel_main(
                   config,
                   rx,
                   ack_rx,
-                  Arc::clone(&quit_thread),
+                  &quit_thread,
                   dispatcher,
                   wm_tx,
                 );
-              }));
+              }),
+            );
             if result.is_err() {
               error!("Stage panel thread panicked.");
               quit_thread.store(true, Ordering::Relaxed);
@@ -251,29 +259,23 @@ impl StageRuntime {
   /// focus, the shell's alt-tab commit can restore the window the
   /// sweep just minimized, which re-triggers the sweep, and so on.
   pub fn should_sweep(&self, hwnd: isize) -> bool {
-    let now_ms = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .map(|elapsed| elapsed.as_millis() as i64)
-      .unwrap_or_default();
+    let now_ms = Self::now_ms();
 
     let last_hwnd = self.last_sweep_hwnd.load(Ordering::Relaxed);
     let last_ms = self.last_sweep_ms.load(Ordering::Relaxed);
 
-    if last_hwnd == hwnd as i64 && now_ms - last_ms < 300 {
+    if last_hwnd == hwnd && now_ms - last_ms < 300 {
       return false;
     }
 
-    self.last_sweep_hwnd.store(hwnd as i64, Ordering::Relaxed);
+    self.last_sweep_hwnd.store(hwnd, Ordering::Relaxed);
     self.last_sweep_ms.store(now_ms, Ordering::Relaxed);
     true
   }
 
   /// Throttles the deferred-sweep log notice to at most one per second.
   pub fn note_deferred_sweep(&self) -> bool {
-    let now_ms = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .map(|elapsed| elapsed.as_millis() as i64)
-      .unwrap_or_default();
+    let now_ms = Self::now_ms();
 
     if now_ms - self.last_skip_ms.load(Ordering::Relaxed) < 1000 {
       return false;
@@ -284,11 +286,12 @@ impl StageRuntime {
   }
 
   /// Current Unix time in milliseconds (0 when the clock is broken).
+  // Millisecond timestamps stay far below `i64::MAX` for any sane clock.
+  #[allow(clippy::cast_possible_truncation)]
   fn now_ms() -> i64 {
     SystemTime::now()
       .duration_since(UNIX_EPOCH)
-      .map(|elapsed| elapsed.as_millis() as i64)
-      .unwrap_or_default()
+      .map_or_default(|elapsed| elapsed.as_millis() as i64)
   }
 
   /// Arms the one-shot foreground-reclaim guard for a sweep of `hwnd`.
@@ -299,7 +302,7 @@ impl StageRuntime {
   /// against the *stealer*, minimizing the actual target instead. The
   /// guard makes the WM re-assert the sweep target exactly once.
   pub fn arm_foreground_reclaim(&self, hwnd: isize) {
-    self.sweep_target.store(hwnd as i64, Ordering::Relaxed);
+    self.sweep_target.store(hwnd, Ordering::Relaxed);
     self.reclaim_armed.store(true, Ordering::Relaxed);
   }
 
@@ -321,7 +324,7 @@ impl StageRuntime {
 
   /// The window the last sweep was run for (0 when never armed).
   pub fn sweep_target(&self) -> isize {
-    self.sweep_target.load(Ordering::Relaxed) as isize
+    self.sweep_target.load(Ordering::Relaxed)
   }
 
   /// Takes the panel -> WM inbox; called once by the main event loop to
@@ -525,8 +528,10 @@ pub fn on_card_activated(
   state: &mut WmState,
   config: &mut UserConfig,
 ) -> anyhow::Result<()> {
-  let Some(mut target) =
-    state.windows().into_iter().find(|window| window.native().id().0 == hwnd)
+  let Some(mut target) = state
+    .windows()
+    .into_iter()
+    .find(|window| window.native().id().0 == hwnd)
   else {
     // Window unmanaged (or closed) - no ack, so the panel falls back to
     // restoring/focusing the window natively itself.
@@ -623,12 +628,12 @@ fn minimize_others(
   // Duplicate sweeps for the same target within the debounce window are
   // echoes of the WM's own activation (shell commits, sync-focus);
   // re-running them makes windows ping-pong.
-  if !state.stage.should_sweep(window.native().id().0 as isize) {
+  if !state.stage.should_sweep(window.native().id().0) {
     info!("Stage sweep skipped: duplicate sweep for {window}.");
     return;
   }
 
-  state.stage.arm_foreground_reclaim(window.native().id().0 as isize);
+  state.stage.arm_foreground_reclaim(window.native().id().0);
   run_sweep(window, state, config);
 }
 
