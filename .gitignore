@@ -13,3 +13,9 @@ out/
 # IDE files
 .vs/
 .idea/
+
+# Stage-manager development artifacts
+shots/*.log
+shots/*.png
+.git-src.txt
+
