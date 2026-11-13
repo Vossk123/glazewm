@@ -372,20 +372,19 @@ fn refresh(
   dispatcher: &Dispatcher,
   force: bool,
 ) {
-  // Exclude the focused window only while it is actually on screen. With
-  // everything minimized the native foreground is a stale leftover, and
-  // excluding it would hide a card the user still needs to pick from.
-  let focused_id = dispatcher
-    .focused_window()
-    .ok()
-    .filter(|window| !window.is_minimized().unwrap_or(false))
-    .map(|window| window.id().0)
-    .unwrap_or(0);
-
+  // Cards show minimized windows only: a visible window is on the
+  // desktop already (coexisting siblings included), so it never needs a
+  // card. The former "exclude the focused window" rule is gone - it hid
+  // a needed card whenever the native foreground was a stale leftover.
   let mut taskbar: Vec<(isize, String, String)> = Vec::new();
+  let mut minimized: Vec<isize> = Vec::new();
   for window in dispatcher.visible_windows().unwrap_or_default() {
     if !is_taskbar_window(&window) {
       continue;
+    }
+
+    if window.is_minimized().unwrap_or(false) {
+      minimized.push(window.id().0);
     }
 
     taskbar.push((
@@ -430,7 +429,7 @@ fn refresh(
           .find(|(seen, _, _)| seen == hwnd)
           .cloned()
       })
-      .filter(|(hwnd, _, _)| *hwnd != focused_id)
+      .filter(|(hwnd, _, _)| minimized.contains(hwnd))
       .collect()
   };
 

@@ -102,6 +102,11 @@ pub struct StageRuntime {
   last_sweep_ms: AtomicI64,
   /// Unix-ms timestamp of the last deferred-sweep notice (log throttle).
   last_skip_ms: AtomicI64,
+  /// Target of the last sweep, armed to re-assert its foreground once if a
+  /// just-minimized window steals it back (0 = never armed).
+  sweep_target: AtomicI64,
+  /// One-shot permission for the foreground reclaim re-assertion.
+  reclaim_armed: AtomicBool,
 }
 
 impl Default for StageRuntime {
@@ -119,6 +124,8 @@ impl Default for StageRuntime {
       last_sweep_hwnd: AtomicI64::new(0),
       last_sweep_ms: AtomicI64::new(0),
       last_skip_ms: AtomicI64::new(0),
+      sweep_target: AtomicI64::new(0),
+      reclaim_armed: AtomicBool::new(false),
     }
   }
 }
@@ -276,6 +283,47 @@ impl StageRuntime {
     true
   }
 
+  /// Current Unix time in milliseconds (0 when the clock is broken).
+  fn now_ms() -> i64 {
+    SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .map(|elapsed| elapsed.as_millis() as i64)
+      .unwrap_or_default()
+  }
+
+  /// Arms the one-shot foreground-reclaim guard for a sweep of `hwnd`.
+  ///
+  /// Apps that get minimized by a sweep (Electron windows in
+  /// particular) sometimes re-assert their own foreground right away,
+  /// cancelling the minimize. The next focus event then re-runs the sweep
+  /// against the *stealer*, minimizing the actual target instead. The
+  /// guard makes the WM re-assert the sweep target exactly once.
+  pub fn arm_foreground_reclaim(&self, hwnd: isize) {
+    self.sweep_target.store(hwnd as i64, Ordering::Relaxed);
+    self.reclaim_armed.store(true, Ordering::Relaxed);
+  }
+
+  /// Consumes the foreground-reclaim guard.
+  ///
+  /// Returns `true` at most once per sweep, and only within a short grace
+  /// period after the sweep ran (outside it, a focus change is genuine
+  /// user intent and must not be overridden).
+  pub fn take_foreground_reclaim(&self) -> bool {
+    if Self::now_ms() - self.last_sweep_ms.load(Ordering::Relaxed) > 750 {
+      return false;
+    }
+
+    self
+      .reclaim_armed
+      .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+      .is_ok()
+  }
+
+  /// The window the last sweep was run for (0 when never armed).
+  pub fn sweep_target(&self) -> isize {
+    self.sweep_target.load(Ordering::Relaxed) as isize
+  }
+
   /// Takes the panel -> WM inbox; called once by the main event loop to
   /// poll `PanelToWm` messages inside `tokio::select!`.
   ///
@@ -358,7 +406,7 @@ pub fn toggle(state: &mut WmState, config: &UserConfig) {
 /// focus. Minimizes all other non-exempt windows.
 pub fn on_window_focused(
   window: &WindowContainer,
-  state: &WmState,
+  state: &mut WmState,
   config: &UserConfig,
 ) {
   if !state.stage.is_active() || state.is_paused {
@@ -375,6 +423,54 @@ pub fn on_window_focused(
       info!("Stage sweep deferred: target {window} not visible yet.");
     }
     return;
+  }
+
+  // Foreground-reclaim guard: a window the last sweep minimized (some
+  // Electron apps do this) stole the foreground back and cancelled its
+  // minimize. Without re-asserting here, the sweep below would run
+  // against the stealer and minimize the actual target instead.
+  let sweep_target = state.stage.sweep_target();
+  let hwnd = window.native().id().0;
+
+  if sweep_target != 0
+    && hwnd != sweep_target
+    && state.stage.take_foreground_reclaim()
+  {
+    let target = state
+      .windows()
+      .into_iter()
+      .find(|other| other.native().id().0 == sweep_target);
+
+    if let Some(target) = target {
+      let target_props = target.native_properties();
+      let reassert = !target.native().is_minimized().unwrap_or(true)
+        && !is_fullscreen(&target, state)
+        && !is_exempt(
+          window,
+          &target_props,
+          &config.value.stage_manager,
+          state,
+        );
+
+      if reassert {
+        info!(
+          "Stage sweep: {window} reclaimed the foreground right after \
+           the sweep - re-asserting {target}."
+        );
+
+        set_focused_descendant(&target.clone().into(), None);
+        state.is_focus_synced = true;
+
+        run_sweep(&target, state, config);
+        state.stage.send(PanelMsg::Refresh);
+
+        if let Err(err) = target.native().focus() {
+          warn!("Stage manager failed to re-assert sweep target: {err}");
+        }
+
+        return;
+      }
+    }
   }
 
   let fullscreen = is_fullscreen(window, state);
@@ -394,7 +490,7 @@ pub fn on_window_focused(
 /// and the sweep runs here once the window is actually visible.
 pub fn on_window_unminimized(
   window: &WindowContainer,
-  state: &WmState,
+  state: &mut WmState,
   config: &UserConfig,
 ) {
   if !state.stage.is_active() || state.is_paused {
@@ -510,13 +606,14 @@ pub fn on_card_activated(
 /// Minimizes every managed window except `window`, capturing a fresh
 /// thumbnail of each while it is still visible (so cards never show a
 /// stale or blank image).
+///
+/// Wraps the sweep guards (fullscreen exemption, duplicate-sweep
+/// debounce) and arms the foreground-reclaim guard before running it.
 fn minimize_others(
   window: &WindowContainer,
   state: &WmState,
   config: &UserConfig,
 ) {
-  let cfg = &config.value.stage_manager;
-
   // A fullscreen focused window owns the screen - leave everything alone.
   if is_fullscreen(window, state) {
     info!("Stage sweep skipped: target {window} is fullscreen.");
@@ -530,6 +627,21 @@ fn minimize_others(
     info!("Stage sweep skipped: duplicate sweep for {window}.");
     return;
   }
+
+  state.stage.arm_foreground_reclaim(window.native().id().0 as isize);
+  run_sweep(window, state, config);
+}
+
+/// The minimize loop of a sweep - runs after `minimize_others` guards
+/// pass. Also used by the foreground-reclaim guard to re-assert a sweep
+/// target whose minimize was cancelled by the app stealing the foreground
+/// back (deliberately bypasses the debounce and does not re-arm).
+fn run_sweep(
+  window: &WindowContainer,
+  state: &WmState,
+  config: &UserConfig,
+) {
+  let cfg = &config.value.stage_manager;
 
   info!("Stage sweep starting for target {window}.");
   let focused_props = window.native_properties();
