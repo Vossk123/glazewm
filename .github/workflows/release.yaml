@@ -78,13 +78,18 @@ jobs:
           VERSION: v${{ needs.meta.outputs.release_version }}
         run: |
           mv installer-universal.exe "glazewm-$VERSION.exe"
-          X64_DIR="build-x86_64-pc-windows-msvc/temp/target/x86_64-pc-windows-msvc/release"
-          ARM_DIR="build-aarch64-pc-windows-msvc/temp/target/aarch64-pc-windows-msvc/release"
+          # upload-artifact strips the uploaded directory itself, so locate
+          # the binaries by name instead of hardcoding the internal layout.
+          X64_EXE=$(find build-x86_64-pc-windows-msvc -type f -name glazewm.exe | head -n1)
+          ARM_EXE=$(find build-aarch64-pc-windows-msvc -type f -name glazewm.exe | head -n1)
+          test -n "$X64_EXE" -a -n "$ARM_EXE"
+          X64_DIR=$(dirname "$X64_EXE")
+          ARM_DIR=$(dirname "$ARM_EXE")
           (cd "$X64_DIR" && zip -q "$GITHUB_WORKSPACE/glazewm-$VERSION-portable-win-x64.zip" \
             glazewm.exe glazewm-cli.exe glazewm-watcher.exe)
           (cd "$ARM_DIR" && zip -q "$GITHUB_WORKSPACE/glazewm-$VERSION-portable-win-arm64.zip" \
             glazewm.exe glazewm-cli.exe glazewm-watcher.exe)
-          ls -la . "$X64_DIR" "$ARM_DIR"
+          ls -la
 
       - name: Write release notes
         env:
