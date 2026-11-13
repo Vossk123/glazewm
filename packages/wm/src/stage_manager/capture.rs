@@ -7,6 +7,10 @@
 //!
 //! Called from the WM thread right before minimizing a window (while the
 //! window is still visible) and from the panel thread for hover refreshes.
+//!
+//! On non-Windows platforms only stubs compile (kept so shared call
+//! sites stay type-checked), hence `dead_code` is allowed there.
+#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
 /// A captured, downscaled window thumbnail in RGBA8.
 #[derive(Clone, Debug)]

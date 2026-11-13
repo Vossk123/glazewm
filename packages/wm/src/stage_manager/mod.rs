@@ -12,12 +12,16 @@
 //! # Platform-specific
 //! - Windows: fully supported (panel thread, thumbnails via
 //!   `PrintWindow`).
-//! - macOS: all entry points are no-ops; enabling logs a warning.
+//! - macOS: all entry points are no-ops; enabling logs a warning. The
+//!   Windows-only machinery (panel messages, capture pipeline) still
+//!   compiles there so shared code paths stay type-checked, hence
+//!   `dead_code` is allowed off-Windows.
+#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
 use std::{
   sync::{
     atomic::{AtomicBool, AtomicI64, AtomicIsize, Ordering},
-    mpsc::{self, Sender},
+    mpsc::Sender,
     Arc,
   },
   thread::JoinHandle,
@@ -25,7 +29,9 @@ use std::{
 };
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tracing::{error, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::error;
+use tracing::{info, warn};
 use wm_common::{
   DisplayState, StageManagerConfig, WindowMatchConfig, WindowRuleEvent,
   WindowState, WmEvent,
@@ -154,7 +160,7 @@ impl StageRuntime {
   ) {
     #[cfg(not(target_os = "windows"))]
     {
-      let _ = (config, dispatcher);
+      let _ = (self, config, dispatcher);
       warn!("Stage manager is only supported on Windows.");
     }
 
@@ -165,8 +171,8 @@ impl StageRuntime {
       }
 
       if self.tx.is_none() {
-        let (tx, rx) = mpsc::channel();
-        let (ack_tx, ack_rx) = mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (ack_tx, ack_rx) = std::sync::mpsc::channel();
         let quit_flag = Arc::new(AtomicBool::new(false));
         let quit_thread = Arc::clone(&quit_flag);
         let config = config.clone();
@@ -433,7 +439,7 @@ pub fn on_window_focused(
   // minimize. Without re-asserting here, the sweep below would run
   // against the stealer and minimize the actual target instead.
   let sweep_target = state.stage.sweep_target();
-  let hwnd = window.native().id().0;
+  let hwnd = window_key(window);
 
   if sweep_target != 0
     && hwnd != sweep_target
@@ -442,7 +448,7 @@ pub fn on_window_focused(
     let target = state
       .windows()
       .into_iter()
-      .find(|other| other.native().id().0 == sweep_target);
+      .find(|other| window_key(other) == sweep_target);
 
     if let Some(target) = target {
       let target_props = target.native_properties();
@@ -531,7 +537,7 @@ pub fn on_card_activated(
   let Some(mut target) = state
     .windows()
     .into_iter()
-    .find(|window| window.native().id().0 == hwnd)
+    .find(|window| window_key(window) == hwnd)
   else {
     // Window unmanaged (or closed) - no ack, so the panel falls back to
     // restoring/focusing the window natively itself.
@@ -608,6 +614,28 @@ pub fn on_card_activated(
   Ok(())
 }
 
+/// Platform-neutral key of a window for sweep bookkeeping.
+///
+/// Sweep records store window identities as `isize`; this normalizes the
+/// platform-specific `WindowId` (raw `HWND` on Windows, `CGWindowID` on
+/// macOS) into that key space.
+///
+/// # Platform-specific
+/// - Windows: The `HWND` value itself.
+/// - macOS: The `CGWindowID` widened via `TryFrom` (`isize::MIN` fallback
+///   would only matter on 32-bit targets we never ship).
+fn window_key(window: &WindowContainer) -> isize {
+  #[cfg(target_os = "windows")]
+  {
+    window.native().id().0
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  {
+    isize::try_from(window.native().id().0).unwrap_or(0)
+  }
+}
+
 /// Minimizes every managed window except `window`, capturing a fresh
 /// thumbnail of each while it is still visible (so cards never show a
 /// stale or blank image).
@@ -628,12 +656,12 @@ fn minimize_others(
   // Duplicate sweeps for the same target within the debounce window are
   // echoes of the WM's own activation (shell commits, sync-focus);
   // re-running them makes windows ping-pong.
-  if !state.stage.should_sweep(window.native().id().0) {
+  if !state.stage.should_sweep(window_key(window)) {
     info!("Stage sweep skipped: duplicate sweep for {window}.");
     return;
   }
 
-  state.stage.arm_foreground_reclaim(window.native().id().0);
+  state.stage.arm_foreground_reclaim(window_key(window));
   run_sweep(window, state, config);
 }
 
