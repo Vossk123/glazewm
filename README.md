@@ -158,6 +158,20 @@ cargo build --release -p wm        # output: target\release\glazewm.exe
 Set `VERSION_NUMBER` at build time to stamp the version
 (`$env:VERSION_NUMBER="3.10.1"; cargo build --release -p wm`).
 
+## About this fork
+
+This fork is an **independently maintained open-source project**, born from a
+personal itch: a Stage Manager workflow on Windows 11. It will stay that way —
+there are no plans to merge it back upstream, and no pull requests will be
+submitted to [glzr-io/glazewm](https://github.com/glzr-io/glazewm). Nothing
+here should be read as an official or endorsed extension of GlazeWM.
+
+Upstream remains the home of the core tiling window manager, and that is by
+design: this fork deliberately touches as little of it as possible, so staying
+independent costs very little. Issues and feature requests about stage mode are
+very welcome in this repository; anything concerning core GlazeWM belongs
+upstream.
+
 ## License
 
 GPL-3.0 — same license as upstream [GlazeWM](https://github.com/glzr-io/glazewm),
@@ -288,6 +302,16 @@ cargo build --release -p wm        # 产物: target\release\glazewm.exe
 
 构建时设置 `VERSION_NUMBER` 可写入版本号
 （`$env:VERSION_NUMBER="3.10.1"; cargo build --release -p wm`）。
+
+### 关于本 fork
+
+本仓库是一个**独立维护的开源项目**：做"台前调度"只是想满足自己的使用习惯，并
+不打算把改动合并回上游——不会向 [glzr-io/glazewm](https://github.com/glzr-io/glazewm)
+提交 PR，也请勿把它当作 GlazeWM 的官方或受背书延伸。
+
+这正是刻意保持"最小侵入"的好处：核心平铺功能永远以上游为准，本 fork 独立演进
+的维护成本极低。台前调度相关的问题与建议，欢迎在本仓库提出；GlazeWM 核心本身
+的问题，请移步上游仓库。
 
 ### 许可证
 
