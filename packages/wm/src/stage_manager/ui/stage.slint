@@ -1,0 +1,146 @@
+// Stage Manager card panel UI.
+//
+// Rendered by the `stage_manager` module in a dedicated thread. All state is
+// pushed through the `Stage` global by the host (Rust) side.
+
+export struct StageCard {
+    title: string,
+    thumb: image,
+    initial: string,
+    accent: color,
+    has-thumb: bool,
+    icon: image,
+    has-icon: bool,
+}
+
+export global Stage {
+    in property <[StageCard]> cards;
+    in property <length> card-width: 216px;
+    in property <length> card-height: 148px;
+    in property <length> spacing: 10px;
+    in property <length> corner: 12px;
+    in property <float> card-opacity: 0.85;
+    in property <string> status: "";
+
+    callback card-clicked(int);
+    callback card-hovered(int);
+}
+
+export component StagePanel inherits Window {
+    title: "GlazeWM Stage";
+    no-frame: true;
+    background: transparent;
+    always-on-top: true;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: Stage.spacing;
+        alignment: start;
+
+        for card[idx] in Stage.cards: Rectangle {
+            height: Stage.card-height;
+            border-radius: Stage.corner;
+            clip: true;
+
+            // Card background.
+            Rectangle {
+                background: rgba(28, 28, 33, Stage.card-opacity);
+            }
+
+            // Thumbnail of the window.
+            if card.has-thumb: Image {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height - 26px;
+                source: card.thumb;
+            }
+
+            // Placeholder when no thumbnail is available.
+            if !card.has-thumb: Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height - 26px;
+                background: card.accent;
+
+                Text {
+                    text: card.initial;
+                    font-size: 30px;
+                    color: white;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Title bar at the bottom of the card.
+            Rectangle {
+                y: parent.height - 26px;
+                height: 26px;
+                width: parent.width;
+                background: rgba(0, 0, 0, 0.55);
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 8px;
+                    spacing: 6px;
+
+                    if card.has-icon: Image {
+                        width: 20px;
+                        height: 20px;
+                        vertical-alignment: center;
+                        source: card.icon;
+                    }
+
+                    Text {
+                        text: card.title;
+                        color: white;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            // Hover highlight.
+            Rectangle {
+                border-width: ta.has-hover ? 2px : 0px;
+                border-color: rgba(255, 255, 255, 0.35);
+                border-radius: Stage.corner;
+            }
+
+            ta := TouchArea {
+                clicked => {
+                    Stage.card-clicked(idx);
+                }
+
+                changed has-hover => {
+                    // Encode: enter -> idx, leave -> -(idx + 2) so the host
+                    // can clear hover only when the leaving card is still
+                    // the hovered one (event order between cards is not
+                    // guaranteed).
+                    Stage.card-hovered(ta.has-hover ? idx : -idx - 2);
+                }
+            }
+        }
+
+        // Status text when there are no background windows.
+        if Stage.cards.length == 0: Rectangle {
+            height: 60px;
+            border-radius: Stage.corner;
+
+            Rectangle {
+                background: rgba(28, 28, 33, Stage.card-opacity);
+            }
+
+            Text {
+                text: Stage.status;
+                color: white;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
