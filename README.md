@@ -146,7 +146,7 @@ Behavior notes:
 
 ## Build from source
 
-Prerequisites: Rust stable toolchain and the Windows 11 SDK.
+Prerequisites: the Rust nightly toolchain (pinned by the repo's `rust-toolchain.toml`; rustup installs it automatically) and the Windows 11 SDK.
 
 ```powershell
 git clone https://github.com/Vossk123/glazewm.git
@@ -277,7 +277,7 @@ stage_manager:
 
 ### 从源码构建
 
-前置：Rust stable 工具链 + Windows 11 SDK。
+前置：Rust nightly 工具链（由仓库的 `rust-toolchain.toml` 固定，rustup 会自动安装）+ Windows 11 SDK。
 
 ```powershell
 git clone https://github.com/Vossk123/glazewm.git
