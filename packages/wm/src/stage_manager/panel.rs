@@ -40,7 +40,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
   GetWindowLongW, GetWindowThreadProcessId, RegisterClassExW,
   SetForegroundWindow, SetWindowLongPtrW, SetWindowLongW, SetWindowPos,
   GWL_EXSTYLE, GWL_HWNDPARENT, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
-  SWP_NOACTIVATE, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+  SWP_NOACTIVATE, WNDCLASSEXW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+  WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use super::{
@@ -724,7 +725,8 @@ fn update_geometry(
   state.borrow_mut().last_geom = Some(geom);
 }
 
-/// One-shot window styling: hide from the task switcher and keep above.
+/// One-shot window styling: hide from the taskbar/task switcher and keep
+/// above.
 ///
 /// Besides `WS_EX_TOOLWINDOW`, a hidden owner window is assigned via
 /// `GWL_HWNDPARENT`. On Windows 11 24H2 the Alt+Tab enumeration was
@@ -732,6 +734,10 @@ fn update_geometry(
 /// while the "root owner" rule (a window joins Alt+Tab only when its
 /// root-owner chain resolves back to itself) still excludes windows that
 /// are owned by another window. The owner trick provides the exclusion.
+///
+/// `WS_EX_APPWINDOW`, which the windowing backend sets at creation time,
+/// is cleared because it forces a taskbar button even for owned tool
+/// windows.
 fn style_panel_window(state: &mut PanelState) {
   if state.styled {
     return;
@@ -754,11 +760,15 @@ fn style_panel_window(state: &mut PanelState) {
       }
     }
 
+    // `WS_EX_APPWINDOW` is set by the windowing backend and forces a
+    // taskbar button even for owned/tool windows, so it is cleared here.
     let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
     SetWindowLongW(
       hwnd,
       GWL_EXSTYLE,
-      (ex_style | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as i32,
+      ((ex_style & !WS_EX_APPWINDOW.0)
+        | WS_EX_NOACTIVATE.0
+        | WS_EX_TOOLWINDOW.0) as i32,
     );
 
     if state.owner_hwnd != 0 {
