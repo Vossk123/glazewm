@@ -19,7 +19,7 @@ export global Stage {
     in property <length> card-height: 148px;
     in property <length> spacing: 10px;
     in property <length> corner: 12px;
-    in property <float> card-opacity: 0.85;
+    in property <float> card-opacity: 0.92;
     in property <string> status: "";
 
     callback card-clicked(int);
@@ -41,6 +41,11 @@ export component StagePanel inherits Window {
             height: Stage.card-height;
             border-radius: Stage.corner;
             clip: true;
+
+            // Soft drop shadow to separate the card from dark wallpapers.
+            drop-shadow-offset-y: 4px;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: rgba(0, 0, 0, 0.55);
 
             // Card background.
             Rectangle {
@@ -100,10 +105,10 @@ export component StagePanel inherits Window {
                 }
             }
 
-            // Hover highlight.
+            // Permanent hairline border; brightens into the hover highlight.
             Rectangle {
-                border-width: ta.has-hover ? 2px : 0px;
-                border-color: rgba(255, 255, 255, 0.35);
+                border-width: ta.has-hover ? 2px : 1px;
+                border-color: ta.has-hover ? rgba(255, 255, 255, 0.65) : rgba(255, 255, 255, 0.35);
                 border-radius: Stage.corner;
             }
 
@@ -126,9 +131,20 @@ export component StagePanel inherits Window {
         if Stage.cards.length == 0: Rectangle {
             height: 60px;
             border-radius: Stage.corner;
+            clip: true;
+
+            drop-shadow-offset-y: 4px;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: rgba(0, 0, 0, 0.55);
 
             Rectangle {
                 background: rgba(28, 28, 33, Stage.card-opacity);
+            }
+
+            Rectangle {
+                border-width: 1px;
+                border-color: rgba(255, 255, 255, 0.35);
+                border-radius: Stage.corner;
             }
 
             Text {
