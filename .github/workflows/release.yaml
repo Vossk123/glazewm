@@ -1,11 +1,16 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
-      version_number:
+      override_n:
         type: string
-        description: Version number to use for the build (e.g. `1.0.0`).
+        default: ""
+        description: >-
+          Force the auto-increment number (version becomes
+          3.10.1-stage.manager.<N>). Leave empty to use the CI run number.
 
 permissions:
   contents: write
@@ -14,14 +19,42 @@ concurrency:
   group: release
 
 jobs:
+  meta:
+    # Auto-publish on every push to `main`, unless the head commit message
+    # contains `[skip release]`. Manual dispatch always runs.
+    if: >-
+      github.event_name != 'push' ||
+      !contains(github.event.head_commit.message, '[skip release]')
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.compute.outputs.release_version }}
+      numeric_version: ${{ steps.compute.outputs.numeric_version }}
+    steps:
+      - name: Compute versions
+        id: compute
+        env:
+          OVERRIDE_N: ${{ inputs.override_n }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          N="${OVERRIDE_N:-$RUN_NUMBER}"
+          if [[ ! "$N" =~ ^[0-9]+$ ]]; then
+            echo "override_n must be a positive integer, got: $N" >&2
+            exit 1
+          fi
+          # Shown to humans (tag + asset names): keeps the stage-manager line.
+          echo "release_version=3.10.1-stage.manager.$N" >> "$GITHUB_OUTPUT"
+          # Fed to `cargo build`/WiX: MSI and Win32 version resources only
+          # accept numeric dotted versions, so the label stays out of here.
+          echo "numeric_version=3.10.1.$N" >> "$GITHUB_OUTPUT"
+
   package:
+    needs: meta
     uses: ./.github/workflows/package.yaml
-    secrets: inherit
     with:
-      version_number: ${{ inputs.version_number }}
+      version_number: ${{ needs.meta.outputs.numeric_version }}
 
   release:
-    needs: package
+    needs: [meta, package]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,23 +67,20 @@ jobs:
 
       - name: Rename installers
         env:
-          # Add a `v` prefix to the version number.
-          VERSION: v${{ inputs.version_number }}
+          VERSION: v${{ needs.meta.outputs.release_version }}
         run: |
           mv installer-universal.exe "glazewm-$VERSION.exe"
           mv installer-arm64.msi "standalone-glazewm-$VERSION-arm64.msi"
           mv installer-x64.msi "standalone-glazewm-$VERSION-x64.msi"
 
-      - name: Create draft release
+      - name: Create release
         env:
-          # Add a `v` prefix to the version number.
-          VERSION: v${{ inputs.version_number }}
+          VERSION: v${{ needs.meta.outputs.release_version }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$VERSION" \
             --title "$VERSION" \
             --generate-notes \
-            --draft \
             "./glazewm-$VERSION.exe#$VERSION for Windows (standard)" \
             "./standalone-glazewm-$VERSION-arm64.msi#$VERSION for Windows (standalone, arm64)" \
             "./standalone-glazewm-$VERSION-x64.msi#$VERSION for Windows (standalone, x64)"

@@ -18,7 +18,10 @@ jobs:
   build:
     uses: ./.github/workflows/build.yaml
     with:
-      enable_ui_access: true
+      # UIAccess=true only works with a trusted code signature (the process
+      # fails to launch otherwise); this fork ships unsigned binaries, so the
+      # feature must stay off.
+      enable_ui_access: false
       version_number: ${{ inputs.version_number }}
 
   package-windows:
